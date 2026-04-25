@@ -63,6 +63,7 @@ dependencies {
     implementation("io.noties.markwon:core:4.6.2")
     implementation("io.noties.markwon:ext-strikethrough:4.6.2")
     implementation("io.noties.markwon:html:4.6.2")
+    implementation("io.noties.markwon:ext-tables:4.6.2")
 
 
 

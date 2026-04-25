@@ -38,12 +38,41 @@ fun MainScreen(viewModel: ChatViewModel) {
     val activeThreadId by viewModel.activeThreadId.collectAsState()
     var showSettings by remember { mutableStateOf(viewModel.getBridgeUrl().isBlank()) }
     var showDirPicker by remember { mutableStateOf(false) }
+    var showHistory by remember { mutableStateOf(false) }
+    // Auto-show directory picker on first launch (no threads yet, connected).
+    val needsProject = threads.isEmpty() && isConnected && viewModel.getBridgeUrl().isNotBlank()
+    if (needsProject && !showDirPicker) {
+        showDirPicker = true
+    }
     var inputText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
+    // Auto-scroll: immediate jump (no animation) to avoid layout thrash during streaming.
+    // Animate only when a genuinely new message arrives (not streaming updates).
+    // If user has scrolled up, don't fight them — let them read.
+    var lastMessageCount by remember { mutableIntStateOf(0) }
+    val isAtBottom by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            info.visibleItemsInfo.lastOrNull()?.let { last ->
+                last.index + last.offset <= 0 && // scrolled to very end
+                last.index >= info.totalItemsCount - 1
+            } ?: true
+        }
+    }
+
     LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
+        if (messages.isEmpty()) return@LaunchedEffect
+        val newMsg = messages.size > lastMessageCount
+        val prevCount = lastMessageCount
+        lastMessageCount = messages.size
+        if (!isAtBottom && !newMsg) return@LaunchedEffect // user scrolled away during streaming
+        if (newMsg && prevCount > 0) {
+            listState.animateScrollToItem(messages.size - 1)
+        } else {
+            listState.scrollToItem(messages.size - 1)
+        }
     }
 
     // ── Chat screen (always rendered, settings/dir picker are overlays) ──
@@ -73,6 +102,9 @@ fun MainScreen(viewModel: ChatViewModel) {
                     }
                 },
                 actions = {
+                    IconButton(onClick = { showHistory = true }) {
+                        Icon(Icons.Default.History, "History", tint = Color(0xFF7B68EE))
+                    }
                     IconButton(onClick = { showDirPicker = true }) {
                         Icon(Icons.Default.Add, "New Agent", tint = Color(0xFF7B68EE))
                     }
@@ -99,7 +131,7 @@ fun MainScreen(viewModel: ChatViewModel) {
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(if (isActive) Color(0xFF7B68EE) else Color(0xFF252542))
                                 .clickable { viewModel.switchThread(t.id) }
-                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                                .padding(start = 10.dp, end = if (threads.size > 1) 0.dp else 10.dp, top = 6.dp, bottom = 6.dp),
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
@@ -122,26 +154,61 @@ fun MainScreen(viewModel: ChatViewModel) {
                                             .background(Color(0xFF66BB6A)),
                                     )
                                 }
+                                // Close button (only when multiple threads)
+                                if (threads.size > 1) {
+                                    IconButton(
+                                        onClick = { viewModel.closeThread(t.id) },
+                                        modifier = Modifier.size(20.dp),
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            "Close thread",
+                                            tint = if (isActive) Color.White.copy(alpha = 0.6f) else Color(0xFF555577),
+                                            modifier = Modifier.size(12.dp),
+                                        )
+                                    }
+                                }
                             }
                         }
-                        Spacer(Modifier.width(6.dp))
+                        Spacer(Modifier.width(4.dp))
                     }
                 }
             }
 
-            // Messages
-            if (messages.isEmpty()) {
+            // Messages (or project selection prompt)
+            if (messages.isEmpty() && threads.isEmpty()) {
                 Box(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     contentAlignment = Alignment.Center,
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.Forum, null, tint = Color(0xFF333355), modifier = Modifier.size(64.dp))
+                        Icon(Icons.Default.FolderOpen, null, tint = Color(0xFF333355), modifier = Modifier.size(64.dp))
                         Spacer(Modifier.height(16.dp))
-                        Text("Connected to pi", color = Color(0xFF555577), fontSize = 16.sp)
+                        Text("Select a project", color = Color(0xFF8888AA), fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(8.dp))
-                        Text("Type a message below", color = Color(0xFF444466), fontSize = 13.sp)
+                        Text("Pick a folder so pi knows where to work", color = Color(0xFF555577), fontSize = 13.sp)
+                        Spacer(Modifier.height(24.dp))
+                        Button(
+                            onClick = { showDirPicker = true },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF7B68EE),
+                                contentColor = Color.White,
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                        ) {
+                            Icon(Icons.Default.Folder, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Browse folders", fontSize = 14.sp)
+                        }
                     }
+                }
+            } else if (messages.isEmpty()) {
+                // Thread exists but no messages yet
+                Box(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("Start chatting with pi", color = Color(0xFF555577), fontSize = 14.sp)
                 }
             } else {
                 LazyColumn(
@@ -233,6 +300,25 @@ fun MainScreen(viewModel: ChatViewModel) {
                 showSettings = false
             },
             onDismiss = { showSettings = false },
+        )
+    }
+
+    // ── History panel ──
+    if (showHistory) {
+        HistoryPanel(
+            threads = threads,
+            onResume = { thread ->
+                if (thread.closed) {
+                    viewModel.resumeThread(thread.id)
+                } else {
+                    viewModel.switchThread(thread.id)
+                }
+                showHistory = false
+            },
+            onClose = { thread ->
+                viewModel.closeThread(thread.id)
+            },
+            onDismiss = { showHistory = false },
         )
     }
 }

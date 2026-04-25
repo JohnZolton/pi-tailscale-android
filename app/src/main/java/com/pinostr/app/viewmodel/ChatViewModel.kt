@@ -4,7 +4,9 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pinostr.app.model.ChatMessage
+import com.pinostr.app.model.PersistenceManager
 import com.pinostr.app.nostr.DirectClient
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -12,8 +14,22 @@ import kotlinx.coroutines.launch
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
+    // ── Persistence ──
+    private val persistence = PersistenceManager(application)
+
     // ── Threads ──
-    data class ThreadData(val id: String, val name: String, val dir: String, val messages: List<ChatMessage>, val isProcessing: Boolean = false, val unread: Boolean = false)
+    data class ThreadData(
+        val id: String,
+        val name: String,
+        val dir: String,
+        val messages: List<ChatMessage> = emptyList(),
+        val createdAt: Long = System.currentTimeMillis(),
+        val lastActiveAt: Long = System.currentTimeMillis(),
+        val closed: Boolean = false,
+        // Runtime-only (not meaningful across restarts):
+        val isProcessing: Boolean = false,
+        val unread: Boolean = false,
+    )
     private val _threads = MutableStateFlow<List<ThreadData>>(emptyList())
     val threads: StateFlow<List<ThreadData>> = _threads.asStateFlow()
     private val _activeThreadId = MutableStateFlow("")
@@ -48,6 +64,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val client = DirectClient()
 
     init {
+        // Load saved threads from disk
+        val saved = persistence.loadThreads()
+        if (saved.isNotEmpty()) {
+            _threads.value = saved.map { it.copy(isProcessing = false, unread = false) }
+            // Restore most recent non-closed thread, or the most recent overall
+            val resume = saved.firstOrNull { !it.closed } ?: saved.first()
+            switchThread(resume.id)
+        }
+
         // Load saved bridge URL from prefs
         val prefs = application.getSharedPreferences("pi_nostr", android.content.Context.MODE_PRIVATE)
         bridgeUrl = prefs.getString("bridge_url", "") ?: ""
@@ -232,8 +257,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val text = frame.data["text"]?.toString() ?: ""
                 val more = (frame.data["more"] as? Boolean) ?: true
 
-                if (currentAssistantMsg == null) {
-                    // First delta — include thinking text at top of response bubble
+                // If no active streaming message, or the previous one was finalized
+                // (isStreaming == false from a prior more:false), start a new text bubble.
+                if (currentAssistantMsg == null || !currentAssistantMsg!!.isStreaming) {
+                    // Include any pending thinking text at top of response bubble
                     val thinking = currentThinkingMsg?.thinkingText ?: ""
                     currentAssistantMsg = ChatMessage(
                         role = ChatMessage.Role.ASSISTANT,
@@ -250,19 +277,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     addMessage(currentAssistantMsg!!)
                 } else {
                     // Subsequent deltas — update in-place
-                    if (currentAssistantMsg != null) {
-                        currentAssistantMsg = currentAssistantMsg!!.copy(text = text, isStreaming = more)
-                        updateMessage(currentAssistantMsg!!.id) { currentAssistantMsg!! }
-                    } else {
-                        // Fallback: create new if we lost track
-                        currentAssistantMsg = ChatMessage(
-                            role = ChatMessage.Role.ASSISTANT,
-                            eventType = ChatMessage.EventType.TEXT,
-                            text = text,
-                            isStreaming = more,
-                        )
-                        addMessage(currentAssistantMsg!!)
-                    }
+                    currentAssistantMsg = currentAssistantMsg!!.copy(text = text, isStreaming = more)
+                    updateMessage(currentAssistantMsg!!.id) { currentAssistantMsg!! }
                 }
             }
 
@@ -307,7 +323,36 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _threads.value = _threads.value + thread
         switchThread(id)
         _isProcessing.value = false
+        persist()
         client.sendMessage("/dir $dir", id)
+    }
+
+    /** Close a thread (remove from active tabs, keep in history). */
+    fun closeThread(id: String) {
+        _threads.value = _threads.value.map {
+            if (it.id == id) it.copy(closed = true) else it
+        }
+        // If closing the active thread, switch to another open one or none
+        if (id == _activeThreadId.value) {
+            val next = _threads.value.firstOrNull { !it.closed }
+            if (next != null) switchThread(next.id) else {
+                _activeThreadId.value = ""
+                _messages.value = emptyList()
+                currentAssistantMsg = null
+                currentThinkingMsg = null
+                currentToolCallMsgs.clear()
+            }
+        }
+        persist()
+    }
+
+    /** Resume a closed thread (bring it back to active tabs). */
+    fun resumeThread(id: String) {
+        _threads.value = _threads.value.map {
+            if (it.id == id) it.copy(closed = false) else it
+        }
+        switchThread(id)
+        persist()
     }
 
     /** Switch to a thread by ID */
@@ -338,6 +383,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         _isProcessing.value = true
+        persist()
         client.sendMessage(text, tid)
     }
 
@@ -350,20 +396,28 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (bridgeUrl.isNotBlank()) connect()
     }
 
+    /** Persist all threads to disk (off main thread). */
+    private fun persist() {
+        viewModelScope.launch(Dispatchers.IO) {
+            persistence.saveThreads(_threads.value)
+        }
+    }
+
     /** Sync current `_messages` to the active thread's stored list */
     private fun syncThreadMessages() {
         val tid = _activeThreadId.value
         if (tid.isNotBlank()) {
             _threads.value = _threads.value.map {
-                if (it.id == tid) it.copy(messages = _messages.value) else it
+                if (it.id == tid) it.copy(messages = _messages.value, lastActiveAt = System.currentTimeMillis()) else it
             }
         }
     }
 
-    /** Set _messages and sync to thread */
+    /** Set _messages and sync to thread, persist. */
     private fun setMessages(msgs: List<ChatMessage>) {
         _messages.value = msgs
         syncThreadMessages()
+        persist()
     }
 
     private fun addMessage(msg: ChatMessage) {
@@ -386,6 +440,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        persist()
         client.disconnect()
         super.onCleared()
     }

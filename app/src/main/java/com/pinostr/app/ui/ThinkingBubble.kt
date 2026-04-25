@@ -1,6 +1,5 @@
 package com.pinostr.app.ui
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -96,7 +95,7 @@ fun ThinkingBubble(
         }
 
         // Expandable thinking text
-        AnimatedVisibility(visible = expanded && text.isNotBlank()) {
+        if (expanded && text.isNotBlank()) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()

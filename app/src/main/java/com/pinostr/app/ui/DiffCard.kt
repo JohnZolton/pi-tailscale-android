@@ -99,31 +99,33 @@ fun DiffCard(
                     .verticalScroll(rememberScrollState())
                     .horizontalScroll(rememberScrollState()),
             ) {
-                val diffLines = diffContent.split("\n")
-                val annotated = buildAnnotatedString {
-                    for ((idx, line) in diffLines.withIndex()) {
-                        if (idx > 0) append("\n")
-                        when {
-                            line.startsWith("+") && !line.startsWith("+++") -> {
-                                withStyle(SpanStyle(
-                                    color = Color(0xFF66BB6A),
-                                    background = Color(0x1A66BB6A),
-                                )) { append(line) }
-                            }
-                            line.startsWith("-") && !line.startsWith("---") -> {
-                                withStyle(SpanStyle(
-                                    color = Color(0xFFEF5350),
-                                    background = Color(0x1AEF5350),
-                                )) { append(line) }
-                            }
-                            line.startsWith("@@") -> {
-                                withStyle(SpanStyle(
-                                    color = Color(0xFF7B68EE),
-                                    fontWeight = FontWeight.Bold,
-                                )) { append(line) }
-                            }
-                            else -> {
-                                withStyle(SpanStyle(color = Color(0xFFB0B0D0))) { append(line) }
+                val annotated = remember(diffContent) {
+                    val diffLines = diffContent.split("\n")
+                    buildAnnotatedString {
+                        for ((idx, line) in diffLines.withIndex()) {
+                            if (idx > 0) append("\n")
+                            when {
+                                line.startsWith("+") && !line.startsWith("+++") -> {
+                                    withStyle(SpanStyle(
+                                        color = Color(0xFF66BB6A),
+                                        background = Color(0x1A66BB6A),
+                                    )) { append(line) }
+                                }
+                                line.startsWith("-") && !line.startsWith("---") -> {
+                                    withStyle(SpanStyle(
+                                        color = Color(0xFFEF5350),
+                                        background = Color(0x1AEF5350),
+                                    )) { append(line) }
+                                }
+                                line.startsWith("@@") -> {
+                                    withStyle(SpanStyle(
+                                        color = Color(0xFF7B68EE),
+                                        fontWeight = FontWeight.Bold,
+                                    )) { append(line) }
+                                }
+                                else -> {
+                                    withStyle(SpanStyle(color = Color(0xFFB0B0D0))) { append(line) }
+                                }
                             }
                         }
                     }

@@ -1,6 +1,5 @@
 package com.pinostr.app.ui
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -97,7 +96,7 @@ fun ToolCallCard(
             }
         }
 
-        AnimatedVisibility(visible = expanded && argsText.isNotBlank()) {
+        if (expanded && argsText.isNotBlank()) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()

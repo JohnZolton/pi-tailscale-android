@@ -6,7 +6,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -94,7 +93,7 @@ fun ChatBubble(
             ) {
                 Column(
                     modifier = Modifier
-                        .widthIn(max = if (isUser) 320.dp else 380.dp)
+                        .let { if (isUser) it.widthIn(max = 320.dp) else it.fillMaxWidth(0.9f) }
                         .clip(shape)
                         .background(bgColor)
                         .padding(horizontal = 14.dp, vertical = 10.dp),
@@ -162,10 +161,11 @@ fun ChatBubble(
                         )
                     }
 
-                    // Timestamp
+                    // Timestamp (cached per message id to avoid date formatting work)
                     Spacer(Modifier.height(4.dp))
+                    val tsLabel = remember(message.id) { formatTimestamp(message.timestamp) }
                     Text(
-                        text = formatTimestamp(message.timestamp),
+                        text = tsLabel,
                         style = MaterialTheme.typography.labelSmall,
                         color = Color(0xFF666688),
                         fontSize = 9.sp,

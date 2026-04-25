@@ -25,6 +25,7 @@ class NostrSignaler {
     private var job: Job? = null
 
     private val secp: Secp256k1 by lazy { NativeSecp256k1AndroidLoader.load() }
+    private val secureRandom = java.security.SecureRandom()
 
     /** Signaling message types. */
     data class SignalingMessage(
@@ -146,15 +147,20 @@ class NostrSignaler {
             add(content)
         }
         val canonical = arr.toString()
+        println("[signaler] Canonical JSON for event ID: ${canonical.take(120)}...")
         val hash = MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray(Charsets.UTF_8))
-        return bytesToHex(hash)
+        val hex = bytesToHex(hash)
+        println("[signaler] Computed event ID: ${hex.take(16)}...")
+        return hex
     }
 
-    /** Sign an event ID with secp256k1 ECDSA. */
+    /** Sign an event ID with secp256k1 Schnorr signature (Nostr standard). */
     private fun signEvent(eventId: String, privkeyHex: String): String {
         val eventIdBytes = hexToBytes(eventId)
         val privBytes = hexToBytes(privkeyHex)
-        val sig = secp.sign(eventIdBytes, privBytes)
+        val auxRand = ByteArray(32).also { secureRandom.nextBytes(it) }
+        val sig = secp.signSchnorr(eventIdBytes, privBytes, auxRand)
+        println("[signaler] Schnorr sig: ${sig.size} bytes, hex: ${bytesToHex(sig).take(32)}...")
         return bytesToHex(sig)
     }
 

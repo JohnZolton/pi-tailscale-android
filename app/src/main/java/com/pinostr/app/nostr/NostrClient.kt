@@ -50,7 +50,7 @@ class NostrClient {
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                println("[nostr] 📩 Message from relay: ${text.take(80)}...")
+                println("[nostr] 📩 Message from relay: ${text.take(500)}")
                 handleMessage(text)
             }
 

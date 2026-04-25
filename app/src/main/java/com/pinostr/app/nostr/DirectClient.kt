@@ -4,17 +4,17 @@ import com.google.gson.Gson
 import com.google.gson.JsonObject
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
-import okhttp3.*
-import java.util.concurrent.TimeUnit
 
 /**
- * Direct WebSocket client to the bridge over Tailscale.
- * No Nostr relays, no NIP-17, just JSON frames.
+ * Bridge client — sends prompts, receives streaming frames.
+ *
+ * Uses a pluggable [Transport] so the same client code works over
+ * WebSocket (Tailscale), WebRTC DataChannel, or any future transport.
  */
 class DirectClient {
 
     private val gson = Gson()
-    private var ws: WebSocket? = null
+    private var transport: Transport? = null
     private var scope: CoroutineScope? = null
 
     private val _frames = Channel<StreamFrame>(Channel.BUFFERED)
@@ -30,55 +30,46 @@ class DirectClient {
         val data: Map<String, Any?>,
     )
 
-    private val client = OkHttpClient.Builder()
-        .pingInterval(15, TimeUnit.SECONDS)
-        .readTimeout(0, TimeUnit.SECONDS)
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .build()
-
     private var reconnectUrl: String? = null
     private var reconnectJob: Job? = null
 
     /**
-     * Connect to the bridge WebSocket.
-     * @param url ws://tailscale-ip:3002/stream
+     * Connect to the bridge.
+     * @param url ws://tailscale-ip:3002 or similar transport address
      */
     fun connect(url: String, scope: CoroutineScope) {
         this.scope = scope
         this.reconnectUrl = url
 
         _connectionState.trySend(ConnectionState.CONNECTING)
-        println("[direct] Connecting to $url")
+        println("[bridge] Connecting to $url")
 
-        val request = Request.Builder().url(url).build()
-        ws = client.newWebSocket(request, object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) {
-                println("[direct] Connected!")
-                _connectionState.trySend(ConnectionState.CONNECTED)
-            }
+        // Use WebSocket transport by default (Tailscale/dev path)
+        val t = WebSocketTransport()
+        transport = t
 
-            override fun onMessage(webSocket: WebSocket, text: String) {
-                handleFrame(text)
-            }
+        t.onOpen = {
+            println("[bridge] Connected!")
+            _connectionState.trySend(ConnectionState.CONNECTED)
+        }
 
-            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                println("[direct] Closing: $reason")
-            }
+        t.onMessage = { text ->
+            handleFrame(text)
+        }
 
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                println("[direct] Closed: $reason")
-                ws = null
-                _connectionState.trySend(ConnectionState.DISCONNECTED)
-                scheduleReconnect()
-            }
+        t.onClose = { code, reason ->
+            println("[bridge] Closed: $reason (code $code)")
+            _connectionState.trySend(ConnectionState.DISCONNECTED)
+            scheduleReconnect()
+        }
 
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                println("[direct] Failed: ${t.message}")
-                ws = null
-                _connectionState.trySend(ConnectionState.ERROR)
-                scheduleReconnect()
-            }
-        })
+        t.onError = { error ->
+            println("[bridge] Error: ${error.message}")
+            _connectionState.trySend(ConnectionState.ERROR)
+            scheduleReconnect()
+        }
+
+        t.connect(url)
     }
 
     /**
@@ -92,8 +83,8 @@ class DirectClient {
                 addProperty("thread", threadId)
             })
         }
-        ws?.send(gson.toJson(msg))
-        println("[direct] Sent: ${text.take(50)} (thread: $threadId)")
+        transport?.send(gson.toJson(msg))
+        println("[bridge] Sent: ${text.take(50)} (thread: $threadId)")
     }
 
     /**
@@ -105,7 +96,7 @@ class DirectClient {
             addProperty("type", "list_dir")
             add("data", JsonObject().apply { addProperty("path", path) })
         }
-        ws?.send(gson.toJson(msg))
+        transport?.send(gson.toJson(msg))
     }
 
     /**
@@ -116,7 +107,7 @@ class DirectClient {
             addProperty("type", "ping")
             add("data", JsonObject())
         }
-        ws?.send(gson.toJson(msg))
+        transport?.send(gson.toJson(msg))
     }
 
     private fun handleFrame(text: String) {
@@ -140,7 +131,7 @@ class DirectClient {
             }
             _frames.trySend(StreamFrame(type, dataMap))
         } catch (e: Exception) {
-            println("[direct] Parse error: ${e.message}")
+            println("[bridge] Parse error: ${e.message}")
         }
     }
 
@@ -149,7 +140,7 @@ class DirectClient {
         reconnectJob = scope?.launch {
             delay(5000)
             val url = reconnectUrl ?: return@launch
-            println("[direct] Reconnecting...")
+            println("[bridge] Reconnecting...")
             connect(url, scope!!)
         }
     }
@@ -157,7 +148,7 @@ class DirectClient {
     fun disconnect() {
         reconnectJob?.cancel()
         reconnectUrl = null
-        ws?.close(1000, "App closing")
-        ws = null
+        transport?.close()
+        transport = null
     }
 }

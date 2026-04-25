@@ -1,8 +1,12 @@
 package com.pinostr.app.nostr
 
 import com.google.gson.Gson
+import com.google.gson.JsonArray
+import com.google.gson.JsonParser
+import fr.acinq.secp256k1.Secp256k1
+import fr.acinq.secp256k1.jni.NativeSecp256k1AndroidLoader
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
+import java.security.MessageDigest
 
 /**
  * Nostr signaling layer (Android).
@@ -19,6 +23,8 @@ class NostrSignaler {
     private var scope: CoroutineScope? = null
     private var convCache = mutableMapOf<String, ByteArray>()
     private var job: Job? = null
+
+    private val secp: Secp256k1 by lazy { NativeSecp256k1AndroidLoader.load() }
 
     /** Signaling message types. */
     data class SignalingMessage(
@@ -42,9 +48,6 @@ class NostrSignaler {
 
     /**
      * Start listening for signaling messages.
-     * @param identity the app's Nostr identity
-     * @param relays list of relay URLs to connect to
-     * @param bridgePubkey the bridge's public key (for filtering)
      */
     fun start(
         identity: NostrIdentity,
@@ -60,13 +63,17 @@ class NostrSignaler {
             c.connect(url, scope)
             this.client = c
 
-            // Subscribe for events from the bridge
-            c.subscribe(mapOf("kinds" to listOf(SIGNALING_KIND), "#p" to listOf(identity.pubkey)))
+            // Wait a moment for WS to open, then subscribe
+            scope.launch {
+                delay(2000) // give WS time to connect
+                c.subscribe(mapOf("kinds" to listOf(SIGNALING_KIND), "#p" to listOf(identity.pubkey)))
+                println("[signaler] Subscribed on $url")
+            }
 
             // Listen for incoming events
             job = scope.launch {
                 for (event in c.events) {
-                    if (event.pubkey != bridgePubkey) continue // only from bridge
+                    if (event.pubkey != bridgePubkey) continue
                     handleIncoming(event)
                 }
             }
@@ -75,51 +82,83 @@ class NostrSignaler {
         }
     }
 
-    /** Stop listening. */
     fun stop() {
         job?.cancel()
         client?.close()
         client = null
     }
 
-    /** Send an encrypted signaling message to the bridge. */
-    fun sendMessage(toPubkey: String, msg: SignalingMessage, onPublish: (Map<String, Any?>) -> Unit) {
+    /**
+     * Send an encrypted, signed signaling message to the bridge via NostrClient.
+     */
+    fun sendMessage(toPubkey: String, msg: SignalingMessage) {
+        val client = this.client ?: return
         val identity = this.identity ?: return
+
+        // Encrypt with NIP-44
         val json = gson.toJson(msg)
         val convKey = getConversationKey(identity.privkey, toPubkey)
         val ciphertext = Nip44.encrypt(json, convKey)
 
+        // Build and sign the Nostr event
+        val createdAt = System.currentTimeMillis() / 1000
+        val eventTags = listOf(listOf("p", toPubkey))
+
+        val eventId = computeEventId(identity.pubkey, createdAt, SIGNALING_KIND, eventTags, ciphertext)
+        val sig = signEvent(eventId, identity.privkey)
+
         val event = mapOf<String, Any?>(
-            "kind" to SIGNALING_KIND,
-            "created_at" to (System.currentTimeMillis() / 1000),
-            "tags" to listOf(listOf("p", toPubkey)),
-            "content" to ciphertext,
+            "id" to eventId,
             "pubkey" to identity.pubkey,
+            "created_at" to createdAt,
+            "kind" to SIGNALING_KIND,
+            "tags" to eventTags,
+            "content" to ciphertext,
+            "sig" to sig,
         )
 
-        // The caller provides the NostrClient's publish or external publish
-        onPublish(event)
-    }
-
-    /** Send a signaling message via the connected NostrClient. */
-    fun sendMessage(toPubkey: String, msg: SignalingMessage) {
-        val client = this.client ?: return
-        sendMessage(toPubkey, msg) { event ->
-            client.publish(event)
-            println("[signaler] Sent ${msg.type} to ${toPubkey.take(12)}")
-        }
+        client.publish(event)
+        println("[signaler] Sent ${msg.type} to ${toPubkey.take(12)}")
     }
 
     // ── Private ──
 
+    /** Compute Nostr event ID: sha256(JSON([0, pubkey, created_at, kind, tags, content])). */
+    private fun computeEventId(pubkey: String, createdAt: Long, kind: Int, tags: List<List<String>>, content: String): String {
+        // Build the canonical JSON array for hashing
+        val arr = JsonArray().apply {
+            add(0) // reserved
+            add(pubkey)
+            add(createdAt)
+            add(kind)
+            val tagsArr = JsonArray()
+            for (tag in tags) {
+                val t = JsonArray()
+                for (v in tag) t.add(v)
+                tagsArr.add(t)
+            }
+            add(tagsArr)
+            add(content)
+        }
+        val canonical = arr.toString()
+        val hash = MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray(Charsets.UTF_8))
+        return bytesToHex(hash)
+    }
+
+    /** Sign an event ID with secp256k1 ECDSA. */
+    private fun signEvent(eventId: String, privkeyHex: String): String {
+        val eventIdBytes = hexToBytes(eventId)
+        val privBytes = hexToBytes(privkeyHex)
+        val sig = secp.sign(eventIdBytes, privBytes)
+        return bytesToHex(sig)
+    }
+
     private fun handleIncoming(event: NostrClient.NostrEvent) {
         val identity = this.identity ?: return
 
-        // Check p-tags include us
         val pTags = event.tags.filter { it.isNotEmpty() && it[0] == "p" }
         if (pTags.none { it.size > 1 && it[1] == identity.pubkey }) return
 
-        // Decrypt
         val plaintext: String
         try {
             val convKey = getConversationKey(identity.privkey, event.pubkey)
@@ -129,7 +168,6 @@ class NostrSignaler {
             return
         }
 
-        // Parse as SignalingMessage
         val msg: SignalingMessage
         try {
             msg = gson.fromJson(plaintext, SignalingMessage::class.java)
@@ -137,7 +175,6 @@ class NostrSignaler {
             return
         }
 
-        // Route
         when (msg.type) {
             "webrtc-offer" -> onOffer?.invoke(msg, event.pubkey)
             "webrtc-answer" -> onAnswer?.invoke(msg, event.pubkey)
@@ -151,5 +188,16 @@ class NostrSignaler {
         return convCache.getOrPut(key) {
             Nip44.getConversationKey(privkeyHex, pubkeyHex)
         }
+    }
+
+    private fun bytesToHex(bytes: ByteArray): String =
+        bytes.joinToString("") { "%02x".format(it) }
+
+    private fun hexToBytes(hex: String): ByteArray {
+        val len = hex.length / 2
+        val bytes = ByteArray(len)
+        for (i in 0 until len) bytes[i] =
+            ((Character.digit(hex[i * 2], 16) shl 4) or Character.digit(hex[i * 2 + 1], 16)).toByte()
+        return bytes
     }
 }

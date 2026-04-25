@@ -61,24 +61,27 @@ class NostrSignaler {
         for (url in relays) {
             val c = NostrClient()
             c.connect(url, scope)
-            this.client = c
+
+            // Use the FIRST relay as our client (skip broken ones like relay.nostr.band)
+            if (this.client == null) {
+                this.client = c
+                println("[signaler] Using relay: $url")
+            }
 
             // Wait a moment for WS to open, then subscribe
             scope.launch {
-                delay(2000) // give WS time to connect
+                delay(3000)
                 c.subscribe(mapOf("kinds" to listOf(SIGNALING_KIND), "#p" to listOf(identity.pubkey)))
                 println("[signaler] Subscribed on $url")
             }
 
             // Listen for incoming events
-            job = scope.launch {
+            scope.launch {
                 for (event in c.events) {
                     if (event.pubkey != bridgePubkey) continue
                     handleIncoming(event)
                 }
             }
-
-            println("[signaler] Listening on ${identity.pubkey.take(12)}... via $url")
         }
     }
 

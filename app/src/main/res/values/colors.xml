@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="dark_surface">#FF1A1A2E</color>
+    <color name="dark_surface_variant">#FF252542</color>
+    <color name="accent">#FF7B68EE</color>
+    <color name="accent_dim">#FF5A4BD1</color>
+    <color name="on_dark">#FFE0E0F0</color>
+    <color name="diff_added">#FF2D6A4F</color>
+    <color name="diff_removed">#FF6B2E3E</color>
+    <color name="thinking_bg">#FF2A2A4A</color>
+</resources>

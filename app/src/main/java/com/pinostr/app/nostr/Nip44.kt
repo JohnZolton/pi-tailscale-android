@@ -3,6 +3,7 @@ package com.pinostr.app.nostr
 
 import android.util.Base64
 import fr.acinq.secp256k1.Secp256k1
+import fr.acinq.secp256k1.jni.NativeSecp256k1AndroidLoader
 import java.security.SecureRandom
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
@@ -19,7 +20,7 @@ object Nip44 {
     private const val MIN_PT = 1
     private const val MAX_PT = 65535
     private val HKDF_SALT = "nip44-v2".encodeToByteArray()
-    private val secp = Secp256k1.get()
+    private val secp: Secp256k1 by lazy { NativeSecp256k1AndroidLoader.load() }
 
     /** Derive 32-byte conversation key from two keypairs. */
     fun getConversationKey(privkeyHex: String, pubkeyHex: String): ByteArray {

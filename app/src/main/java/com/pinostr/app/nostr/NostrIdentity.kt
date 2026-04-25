@@ -2,6 +2,7 @@ package com.pinostr.app.nostr
 
 import android.content.Context
 import fr.acinq.secp256k1.Secp256k1
+import fr.acinq.secp256k1.jni.NativeSecp256k1AndroidLoader
 import java.security.SecureRandom
 
 /**
@@ -17,7 +18,9 @@ data class NostrIdentity(
     companion object {
         private const val PREFS_KEY = "pi_nostr_identity"
         private const val PRIVKEY = "nostr_privkey"
-        private val secp = Secp256k1.get()
+        private val secp: Secp256k1 by lazy {
+            NativeSecp256k1AndroidLoader.load()
+        }
 
         /** Load or generate a persistent identity. */
         fun loadOrCreate(context: Context): NostrIdentity {

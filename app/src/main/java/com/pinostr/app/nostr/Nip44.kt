@@ -25,10 +25,12 @@ object Nip44 {
     /** Derive 32-byte conversation key from two keypairs. */
     fun getConversationKey(privkeyHex: String, pubkeyHex: String): ByteArray {
         val priv = hexToBytes(privkeyHex)
-        val pub = hexToBytes(pubkeyHex)
-        // NIP-44: ECDH shared secret -> subarray(1,33) = x coordinate only
-        val shared = secp.ecdh(priv, pub)
-        val sharedX = shared.copyOfRange(1, 33)
+        // Bridge pubkey may be 32-byte x-only (64 hex chars).
+        // secp.ecdh() requires 33-byte compressed key (02/03 + x).
+        val pubHex = if (pubkeyHex.length == 64) "02$pubkeyHex" else pubkeyHex
+        val pub = hexToBytes(pubHex)
+        // ECDH returns 32-byte x coordinate directly (no prefix to strip)
+        val sharedX = secp.ecdh(priv, pub)
         return hkdfExtract(HKDF_SALT, sharedX)
     }
 

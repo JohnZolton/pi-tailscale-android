@@ -1,34 +1,23 @@
 package com.pinostr.app.nostr
 
 import android.content.Context
-import java.math.BigInteger
-import java.security.*
-import java.security.spec.ECGenParameterSpec
-import java.security.spec.ECPoint
-import java.security.spec.ECPrivateKeySpec
-import java.security.spec.ECPublicKeySpec
+import fr.acinq.secp256k1.Secp256k1
+import java.security.SecureRandom
 
 /**
- * Nostr identity — secp256k1 keypair via Bouncy Castle provider.
+ * Nostr identity — secp256k1 keypair via libsecp256k1 native bindings.
  *
  * Persisted to app's private storage so the same key is reused
- * across app restarts (for consistent pairing with the bridge).
+ * across app restarts.
  */
 data class NostrIdentity(
-    val privkey: String,  // hex-encoded 32-byte secret scalar
+    val privkey: String,  // hex-encoded 32-byte secret key
     val pubkey: String,   // hex-encoded 33-byte compressed public key
 ) {
     companion object {
         private const val PREFS_KEY = "pi_nostr_identity"
         private const val PRIVKEY = "nostr_privkey"
-
-        init {
-            // Register Bouncy Castle as a JCA provider
-            Security.insertProviderAt(
-                org.bouncycastle.jce.provider.BouncyCastleProvider(),
-                1,
-            )
-        }
+        private val secp = Secp256k1.get()
 
         /** Load or generate a persistent identity. */
         fun loadOrCreate(context: Context): NostrIdentity {
@@ -45,24 +34,27 @@ data class NostrIdentity(
 
         /** Generate a fresh secp256k1 keypair. */
         fun generate(): NostrIdentity {
-            val kpg = KeyPairGenerator.getInstance("EC", "BC")
-            kpg.initialize(ECGenParameterSpec("secp256k1"), SecureRandom())
-            val kp = kpg.generateKeyPair()
-
-            val priv = (kp.private as org.bouncycastle.jce.interfaces.ECPrivateKey).d.toString(16)
-            val pubKey = kp.public as org.bouncycastle.jce.interfaces.ECPublicKey
-            val encoded = pubKey.q.getEncoded(true) // compressed
-            return NostrIdentity(priv.padStart(64, '0'), bytesToHex(encoded))
+            val priv = ByteArray(32).also { SecureRandom().nextBytes(it) }
+            val pub = secp.pubKeyCompress(secp.pubkeyCreate(priv))
+            return NostrIdentity(bytesToHex(priv), bytesToHex(pub))
         }
 
-        /** Derive the public key hex from a private key hex. */
+        /** Derive the compressed public key hex from a private key hex. */
         fun derivePubkey(privkeyHex: String): String {
-            val spec = org.bouncycastle.jce.ECNamedCurveTable.getParameterSpec("secp256k1")
-            val q = spec.g.multiply(BigInteger(privkeyHex, 16))
-            return bytesToHex(q.getEncoded(true))
+            val priv = hexToBytes(privkeyHex)
+            val pub = secp.pubKeyCompress(secp.pubkeyCreate(priv))
+            return bytesToHex(pub)
         }
 
         private fun bytesToHex(bytes: ByteArray): String =
             bytes.joinToString("") { "%02x".format(it) }
+
+        private fun hexToBytes(hex: String): ByteArray {
+            val len = hex.length / 2
+            val bytes = ByteArray(len)
+            for (i in 0 until len) bytes[i] =
+                ((Character.digit(hex[i * 2], 16) shl 4) or Character.digit(hex[i * 2 + 1], 16)).toByte()
+            return bytes
+        }
     }
 }

@@ -56,8 +56,8 @@ dependencies {
     // Gson for JSON
     implementation("com.google.code.gson:gson:2.11.0")
 
-    // Bouncy Castle for secp256k1 (Nostr keys, NIP-44 ECDH)
-    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+    // secp256k1 via libsecp256k1 (Bitcoin Core native, fast)
+    implementation("fr.acinq.secp256k1:secp256k1-kmp:0.14.0")
 
     // WebRTC for P2P data channels (native libs + Java wrapper)
     implementation("io.getstream:stream-webrtc-android:1.2.2")

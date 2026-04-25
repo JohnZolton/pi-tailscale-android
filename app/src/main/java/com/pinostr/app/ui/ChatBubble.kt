@@ -159,7 +159,6 @@ fun ChatBubble(
                     if (message.text.isNotBlank()) {
                         MarkdownText(
                             markdown = message.text + if (message.isStreaming) " ▍" else "",
-                            textColor = Color(0xFFE0E0F0),
                         )
                     }
 

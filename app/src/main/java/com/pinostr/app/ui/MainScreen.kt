@@ -2,6 +2,8 @@ package com.pinostr.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -115,58 +117,52 @@ fun MainScreen(viewModel: ChatViewModel) {
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF12121E)),
             )
 
-            // Thread tabs
-            if (threads.isNotEmpty()) {
+            // Thread tabs — compact horizontal scroll bar, shows only non-closed threads
+            val openThreads = threads.filter { !it.closed }
+            if (openThreads.isNotEmpty()) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(Color(0xFF1A1A2E))
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    for (t in threads) {
+                    openThreads.forEach { t ->
                         val isActive = t.id == activeThreadId
                         Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
+                                .clip(RoundedCornerShape(6.dp))
                                 .background(if (isActive) Color(0xFF7B68EE) else Color(0xFF252542))
                                 .clickable { viewModel.switchThread(t.id) }
-                                .padding(start = 10.dp, end = if (threads.size > 1) 0.dp else 10.dp, top = 6.dp, bottom = 6.dp),
+                                .padding(horizontal = 8.dp, vertical = 3.dp),
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
                                     text = t.name,
                                     color = if (isActive) Color.White else Color(0xFF8888AA),
-                                    fontSize = 12.sp,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
                                 )
-                                Spacer(Modifier.width(4.dp))
                                 if (t.isProcessing) {
+                                    Spacer(Modifier.width(3.dp))
                                     CircularProgressIndicator(
-                                        modifier = Modifier.size(10.dp),
+                                        modifier = Modifier.size(8.dp),
                                         color = if (isActive) Color.White else Color(0xFF7B68EE),
-                                        strokeWidth = 1.5.dp,
-                                    )
-                                } else if (t.unread) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(8.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0xFF66BB6A)),
+                                        strokeWidth = 1.dp,
                                     )
                                 }
-                                // Close button (only when multiple threads)
-                                if (threads.size > 1) {
-                                    IconButton(
-                                        onClick = { viewModel.closeThread(t.id) },
-                                        modifier = Modifier.size(20.dp),
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Close,
-                                            "Close thread",
-                                            tint = if (isActive) Color.White.copy(alpha = 0.6f) else Color(0xFF555577),
-                                            modifier = Modifier.size(12.dp),
-                                        )
-                                    }
+                                // Close button always present for multi-thread cleanup
+                                IconButton(
+                                    onClick = { viewModel.closeThread(t.id) },
+                                    modifier = Modifier.size(16.dp),
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        "Close thread",
+                                        tint = if (isActive) Color.White.copy(alpha = 0.5f) else Color(0xFF555577),
+                                        modifier = Modifier.size(10.dp),
+                                    )
                                 }
                             }
                         }

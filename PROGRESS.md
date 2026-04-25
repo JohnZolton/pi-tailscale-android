@@ -49,6 +49,15 @@ The active thread's directory path is only visible in Settings dialog. Could sho
 ### No session persistence
 Threads are lost on app restart (in-memory only). Bridge sessions survive as long as the bridge process runs.
 
+### ✅ FIXED — Tailscale connection drops on background/close
+**Root cause**: When the app goes to background or the screen locks, Android may silently kill the WebSocket socket without firing `onClose`/`onFailure`. The `_isConnected` state stayed stale (`true`) so the app thought it was connected but nothing flowed.
+
+**Fix**: `MainActivity.onResume()` calls `viewModel.onAppForegrounded()` which forces a fresh WebSocket reconnect. Also fixed a secondary bug where `connect()` wiped loaded messages on reconnect, and added coroutine job tracking to cancel stale listener coroutines from prior connect attempts.
+
+**Files changed**:
+- `MainActivity.kt` — added `onResume()` lifecycle callback + explicit ViewModelProvider
+- `ChatViewModel.kt` — added `onAppForegrounded()`, `preserveMessages` flag on `connect()`, `connectionJob` tracking to cancel stale listeners
+
 ## Next Steps / Wants
 
 ### High Priority

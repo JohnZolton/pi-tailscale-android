@@ -62,6 +62,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private var bridgeUrl: String = ""
     private val client = DirectClient()
+    private var connectionJob: kotlinx.coroutines.Job? = null
 
     init {
         // Load saved threads from disk
@@ -77,7 +78,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val prefs = application.getSharedPreferences("pi_nostr", android.content.Context.MODE_PRIVATE)
         bridgeUrl = prefs.getString("bridge_url", "") ?: ""
         if (bridgeUrl.isNotBlank()) {
-            connect()
+            connect(preserveMessages = saved.isNotEmpty())
         }
     }
 
@@ -91,12 +92,31 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun getBridgeUrl(): String = bridgeUrl
 
-    private fun connect() {
-        client.disconnect()
-        currentAssistantMsg = null
-        _messages.value = emptyList()
+    /**
+     * Called when the app returns to foreground after being backgrounded
+     * or the screen was locked. Android may have silently killed the
+     * WebSocket socket, so we force a fresh connection.
+     */
+    fun onAppForegrounded() {
+        if (bridgeUrl.isNotBlank()) {
+            // Always reconnect on resume — don't trust stale isConnected state
+            connect(preserveMessages = true)
+        }
+    }
 
-        viewModelScope.launch {
+    private fun connect(preserveMessages: Boolean = false) {
+        client.disconnect()
+        // Cancel any previous listener coroutines (from prior connect calls)
+        connectionJob?.cancel()
+        // Clear streaming state pointers (any in-progress turn is lost)
+        currentAssistantMsg = null
+        currentThinkingMsg = null
+        currentToolCallMsgs.clear()
+        if (!preserveMessages) {
+            _messages.value = emptyList()
+        }
+
+        connectionJob = viewModelScope.launch {
             // Listen for connection state
             launch {
                 for (state in client.connectionState) {
@@ -393,7 +413,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun reconnect() {
-        if (bridgeUrl.isNotBlank()) connect()
+        if (bridgeUrl.isNotBlank()) connect(preserveMessages = true)
     }
 
     /** Persist all threads to disk (off main thread). */

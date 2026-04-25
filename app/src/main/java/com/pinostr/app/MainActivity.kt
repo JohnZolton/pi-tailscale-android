@@ -11,7 +11,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.ViewModelProvider
 import com.pinostr.app.ui.MainScreen
 import com.pinostr.app.viewmodel.ChatViewModel
 
@@ -26,19 +26,34 @@ private val DarkColors = darkColorScheme(
 )
 
 class MainActivity : ComponentActivity() {
+    private lateinit var viewModel: ChatViewModel
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Obtain ViewModel early so lifecycle callbacks can use it
+        viewModel = ViewModelProvider(this)[ChatViewModel::class.java]
+
         setContent {
             MaterialTheme(colorScheme = DarkColors) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    val viewModel: ChatViewModel = viewModel()
                     PiNostrApp(viewModel)
                 }
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // When the user returns to the app, Android may have silently killed
+        // the WebSocket socket (Tailscale or not). Force a reconnect so the
+        // connection is fresh and streaming works again.
+        if (::viewModel.isInitialized) {
+            viewModel.onAppForegrounded()
         }
     }
 }

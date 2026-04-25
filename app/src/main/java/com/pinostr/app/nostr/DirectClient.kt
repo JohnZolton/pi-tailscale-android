@@ -145,10 +145,40 @@ class DirectClient {
         }
     }
 
+    /**
+     * Replace the current transport with a new one (e.g. WebSocket → WebRTC).
+     * The old transport is closed. Frames continue flowing through the new one.
+     */
+    fun setTransport(newTransport: Transport) {
+        disconnect() // close old transport + cancel reconnect
+        transport = newTransport
+
+        newTransport.onMessage = { text ->
+            handleFrame(text)
+        }
+
+        newTransport.onClose = { code, reason ->
+            println("[bridge] Transport closed: $reason (code $code)")
+            _connectionState.trySend(ConnectionState.DISCONNECTED)
+        }
+
+        newTransport.onError = { error ->
+            println("[bridge] Transport error: ${error.message}")
+            _connectionState.trySend(ConnectionState.ERROR)
+        }
+
+        // Notify connection state once transport is ready
+        newTransport.onOpen = {
+            println("[bridge] Transport connected!")
+            _connectionState.trySend(ConnectionState.CONNECTED)
+        }
+    }
+
     fun disconnect() {
         reconnectJob?.cancel()
         reconnectUrl = null
         transport?.close()
         transport = null
+        _connectionState.trySend(ConnectionState.DISCONNECTED)
     }
 }

@@ -3,9 +3,10 @@ package com.pinostr.app.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.gson.Gson
 import com.pinostr.app.model.ChatMessage
 import com.pinostr.app.model.PersistenceManager
-import com.pinostr.app.nostr.DirectClient
+import com.pinostr.app.nostr.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -65,6 +66,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val client = DirectClient()
     private var connectionJob: kotlinx.coroutines.Job? = null
 
+    private val gson = Gson()
+    private var nostrSignaler: NostrSignaler? = null
+    private var webrtcTransport: WebRtcTransport? = null
+
     init {
         // Load saved threads from disk
         val saved = persistence.loadThreads()
@@ -96,6 +101,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun getBridgeUrl(): String = bridgeUrl
 
+    /** Clear the WebSocket bridge URL — disables Tailscale path. */
+    fun clearBridgeUrl() {
+        bridgeUrl = ""
+        getApplication<android.app.Application>()
+            .getSharedPreferences("pi_nostr", android.content.Context.MODE_PRIVATE)
+            .edit().remove("bridge_url").apply()
+        client.disconnect()
+        addStatusMessage("WebSocket disconnected. Use Nostr pairing for P2P.")
+    }
+
     /** Save Nostr pairing data and initialize the P2P flow. */
     fun setPairingData(json: String) {
         pairingData = json
@@ -106,10 +121,91 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun initNostrPairing(json: String) {
-        // TODO: parse pairing JSON, create NostrSignaler + WebRtcTransport,
-        // connect to bridge via Nostr signaling + WebRTC DataChannel
-        println("[pairing] Saved pairing data: ${json.take(80)}...")
-        addStatusMessage("Bridge pairing saved. P2P connection coming soon.")
+        try {
+            val pairing = gson.fromJson(json, BridgePairing::class.java)
+            if (pairing.pubkey.isBlank() || pairing.relays.isEmpty()) {
+                addStatusMessage("Invalid pairing data: missing pubkey or relays")
+                return
+            }
+
+            val ctx = getApplication<android.app.Application>()
+
+            // 1. Create app identity (load existing or generate new)
+            val identity = NostrIdentity.loadOrCreate(ctx)
+            println("[pairing] App pubkey: ${identity.pubkey.take(12)}...")
+
+            // 2. Create WebRTC transport
+            val transport = WebRtcTransport()
+            transport.initialize(ctx)
+            this.webrtcTransport = transport
+
+            // 3. Create Nostr signaller and wire callbacks
+            val signaler = NostrSignaler()
+            this.nostrSignaler = signaler
+
+            signaler.onAnswer = { msg, fromPubkey ->
+                println("[pairing] Received answer from ${fromPubkey.take(12)}")
+                msg.sdp?.let { transport.setRemoteAnswer(it) }
+            }
+
+            signaler.onIce = { msg, fromPubkey ->
+                val parts = (msg.candidate ?: "").split("|")
+                if (parts.size == 2) {
+                    transport.addIceCandidate(parts[0], parts[1])
+                }
+            }
+
+            // 4. Wire transport open → swap into client
+            transport.onOpen = {
+                println("[pairing] WebRTC DataChannel open!")
+                addStatusMessage("P2P connected via WebRTC")
+                // Disconnect WebSocket and use WebRTC transport
+                client.setTransport(transport)
+                // Send state_sync to trigger bridge welcome
+                transport.send("{\"type\":\"state_sync\",\"data\":{}}")
+                addStatusMessage("Connected via Nostr + WebRTC. Select a project to start.")
+            }
+
+            transport.onError = { err ->
+                println("[pairing] WebRTC error: ${err.message}")
+                addStatusMessage("P2P failed: ${err.message}. Falling back to WebSocket.")
+                if (bridgeUrl.isNotBlank()) {
+                    connect()
+                }
+            }
+
+            // 5. Start Nostr signaller (connects to relays, subscribes)
+            signaler.start(identity, pairing.relays, pairing.pubkey, viewModelScope)
+            println("[pairing] Nostr signaller started, creating WebRTC offer...")
+
+            // 6. Generate WebRTC offer and send via Nostr
+            transport.onLocalDescription = { sdp, type ->
+                if (type == "offer") {
+                    println("[pairing] Sending WebRTC offer...")
+                    signaler.sendMessage(pairing.pubkey, NostrSignaler.SignalingMessage(
+                        type = "webrtc-offer",
+                        pairingCode = pairing.pairingCode,
+                        sdp = sdp,
+                        sessionPubkey = identity.pubkey,
+                    ))
+                }
+            }
+
+            transport.onLocalCandidate = { candidate, mid ->
+                signaler.sendMessage(pairing.pubkey, NostrSignaler.SignalingMessage(
+                    type = "webrtc-ice",
+                    candidate = "$candidate|$mid",
+                ))
+            }
+
+            // 7. Create the WebRTC offer (triggers onLocalDescription)
+            transport.createOffer(identity.pubkey.take(16))
+            addStatusMessage("Pairing with bridge via Nostr...")
+
+        } catch (e: Exception) {
+            println("[pairing] Error: ${e.message}")
+            addStatusMessage("Pairing failed: ${e.message}")
+        }
     }
 
     private fun addStatusMessage(text: String) {

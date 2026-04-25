@@ -295,6 +295,9 @@ fun MainScreen(viewModel: ChatViewModel) {
                 viewModel.setBridgeUrl(url)
                 showSettings = false
             },
+            onClearUrl = {
+                viewModel.clearBridgeUrl()
+            },
             onSavePairing = { json ->
                 viewModel.setPairingData(json)
             },
@@ -330,6 +333,7 @@ private fun SettingsDialog(
     isConnected: Boolean,
     activeThreadDir: String,
     onSave: (String) -> Unit,
+    onClearUrl: () -> Unit = {},
     onSavePairing: (String) -> Unit = {},
     onDismiss: () -> Unit,
 ) {
@@ -349,7 +353,14 @@ private fun SettingsDialog(
         text = {
             Column {
                 // Bridge URL
-                Text("WebSocket URL", color = Color(0xFF8888AA), fontSize = 12.sp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("WebSocket URL (Tailscale)", color = Color(0xFF8888AA), fontSize = 12.sp, modifier = Modifier.weight(1f))
+                    if (url.isNotBlank()) {
+                        TextButton(onClick = { onClearUrl(); url = "" }) {
+                            Text("Clear", color = Color(0xFFEF5350), fontSize = 10.sp)
+                        }
+                    }
+                }
                 Spacer(Modifier.height(4.dp))
                 OutlinedTextField(
                     value = url,

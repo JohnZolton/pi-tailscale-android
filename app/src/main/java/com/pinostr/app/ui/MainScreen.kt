@@ -295,6 +295,9 @@ fun MainScreen(viewModel: ChatViewModel) {
                 viewModel.setBridgeUrl(url)
                 showSettings = false
             },
+            onSavePairing = { json ->
+                viewModel.setPairingData(json)
+            },
             onDismiss = { showSettings = false },
         )
     }
@@ -327,9 +330,12 @@ private fun SettingsDialog(
     isConnected: Boolean,
     activeThreadDir: String,
     onSave: (String) -> Unit,
+    onSavePairing: (String) -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     var url by remember { mutableStateOf(currentUrl) }
+    var pairingJson by remember { mutableStateOf("") }
+    var showPairingField by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -377,6 +383,78 @@ private fun SettingsDialog(
                     Box(Modifier.size(8.dp).clip(CircleShape).background(if (isConnected) Color(0xFF66BB6A) else Color(0xFF8888AA)))
                     Spacer(Modifier.width(6.dp))
                     Text(if (isConnected) "Connected" else "Disconnected", color = Color(0xFF8888AA), fontSize = 13.sp)
+                }
+
+                Spacer(Modifier.height(16.dp))
+                HorizontalDivider(color = Color(0xFF333355), thickness = 0.5.dp)
+                Spacer(Modifier.height(8.dp))
+
+                // Nostr Pairing section
+                TextButton(onClick = { showPairingField = !showPairingField }) {
+                    Icon(
+                        Icons.Default.VpnKey,
+                        null,
+                        tint = Color(0xFF7B68EE),
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        if (showPairingField) "Hide Nostr pairing" else "Nostr pairing (P2P)",
+                        color = Color(0xFF7B68EE),
+                        fontSize = 12.sp,
+                    )
+                }
+
+                if (showPairingField) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Paste the pairing JSON from http://bridge-ip:3003/pairing",
+                        color = Color(0xFF666688),
+                        fontSize = 10.sp,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = pairingJson,
+                        onValueChange = { pairingJson = it },
+                        placeholder = { Text("{\"pubkey\":\"...\", \"relays\":[...]}", color = Color(0xFF555577), fontSize = 11.sp) },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp),
+                        minLines = 3,
+                        maxLines = 6,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color(0xFFE0E0F0),
+                            unfocusedTextColor = Color(0xFFE0E0F0),
+                            focusedContainerColor = Color(0xFF1A1A2E),
+                            unfocusedContainerColor = Color(0xFF1A1A2E),
+                            focusedBorderColor = Color(0xFF7B68EE),
+                            unfocusedBorderColor = Color(0xFF333355),
+                            cursorColor = Color(0xFF7B68EE),
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        textStyle = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 11.sp,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        ),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(
+                        onClick = {
+                            if (pairingJson.isNotBlank()) {
+                                onSavePairing(pairingJson.trim())
+                                pairingJson = ""
+                                showPairingField = false
+                            }
+                        },
+                        enabled = pairingJson.isNotBlank(),
+                    ) {
+                        Icon(
+                            Icons.Default.Save,
+                            null,
+                            tint = Color(0xFF7B68EE),
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("Save Nostr pairing", color = Color(0xFF7B68EE), fontSize = 12.sp)
+                    }
                 }
             }
         },

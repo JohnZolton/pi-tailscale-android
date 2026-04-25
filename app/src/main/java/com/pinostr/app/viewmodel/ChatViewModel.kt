@@ -61,6 +61,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var currentToolCallMsgs = mutableMapOf<String, ChatMessage>() // toolCallId → msg
 
     private var bridgeUrl: String = ""
+    private var pairingData: String = ""
     private val client = DirectClient()
     private var connectionJob: kotlinx.coroutines.Job? = null
 
@@ -74,11 +75,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             switchThread(resume.id)
         }
 
-        // Load saved bridge URL from prefs
+        // Load saved bridge URL + pairing data from prefs
         val prefs = application.getSharedPreferences("pi_nostr", android.content.Context.MODE_PRIVATE)
         bridgeUrl = prefs.getString("bridge_url", "") ?: ""
+        pairingData = prefs.getString("pairing_data", "") ?: ""
         if (bridgeUrl.isNotBlank()) {
             connect(preserveMessages = saved.isNotEmpty())
+        } else if (pairingData.isNotBlank()) {
+            initNostrPairing(pairingData)
         }
     }
 
@@ -91,6 +95,31 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun getBridgeUrl(): String = bridgeUrl
+
+    /** Save Nostr pairing data and initialize the P2P flow. */
+    fun setPairingData(json: String) {
+        pairingData = json
+        val prefs = getApplication<android.app.Application>()
+            .getSharedPreferences("pi_nostr", android.content.Context.MODE_PRIVATE)
+        prefs.edit().putString("pairing_data", json).apply()
+        initNostrPairing(json)
+    }
+
+    private fun initNostrPairing(json: String) {
+        // TODO: parse pairing JSON, create NostrSignaler + WebRtcTransport,
+        // connect to bridge via Nostr signaling + WebRTC DataChannel
+        println("[pairing] Saved pairing data: ${json.take(80)}...")
+        addStatusMessage("Bridge pairing saved. P2P connection coming soon.")
+    }
+
+    private fun addStatusMessage(text: String) {
+        val msg = ChatMessage(
+            role = ChatMessage.Role.SYSTEM,
+            eventType = ChatMessage.EventType.STATUS,
+            text = text,
+        )
+        addMessage(msg)
+    }
 
     /**
      * Called when the app returns to foreground after being backgrounded

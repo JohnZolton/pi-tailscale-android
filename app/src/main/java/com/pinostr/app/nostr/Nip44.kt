@@ -26,11 +26,13 @@ object Nip44 {
     fun getConversationKey(privkeyHex: String, pubkeyHex: String): ByteArray {
         val priv = hexToBytes(privkeyHex)
         // Bridge pubkey may be 32-byte x-only (64 hex chars).
-        // secp.ecdh() requires 33-byte compressed key (02/03 + x).
+        // pubKeyTweakMul requires 33-byte compressed key (02/03 + x).
         val pubHex = if (pubkeyHex.length == 64) "02$pubkeyHex" else pubkeyHex
         val pub = hexToBytes(pubHex)
-        // ECDH returns 32-byte x coordinate directly (no prefix to strip)
-        val sharedX = secp.ecdh(priv, pub)
+        // pubKeyTweakMul computes pub * priv, returns 33-byte compressed point.
+        // secp.ecdh() uses SHA-256 internally (wrong for NIP-44).
+        val shared = secp.pubKeyTweakMul(pub, priv)
+        val sharedX = shared.copyOfRange(1, 33) // strip 02/03 prefix, keep x coordinate
         return hkdfExtract(HKDF_SALT, sharedX)
     }
 

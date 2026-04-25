@@ -102,7 +102,9 @@ class NostrSignaler {
         // Encrypt with NIP-44
         val json = gson.toJson(msg)
         val convKey = getConversationKey(identity.privkey, toPubkey)
+        println("[signaler] ConvKey (first 16 hex): ${bytesToHex(convKey).take(16)}...")
         val ciphertext = Nip44.encrypt(json, convKey)
+        println("[signaler] Ciphertext (first 40): ${ciphertext.take(40)}...")
 
         // Build and sign the Nostr event
         val createdAt = System.currentTimeMillis() / 1000

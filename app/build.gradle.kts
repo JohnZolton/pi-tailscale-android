@@ -59,7 +59,7 @@ dependencies {
     // Bouncy Castle for secp256k1 (Nostr keys, NIP-44 ECDH)
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
 
-    // WebRTC for P2P data channels
+    // WebRTC for P2P data channels (native libs + Java wrapper)
     implementation("io.getstream:stream-webrtc-android:1.2.2")
 
     // Coroutines

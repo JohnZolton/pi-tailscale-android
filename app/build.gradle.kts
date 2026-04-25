@@ -56,6 +56,12 @@ dependencies {
     // Gson for JSON
     implementation("com.google.code.gson:gson:2.11.0")
 
+    // Bouncy Castle for secp256k1 (Nostr keys, NIP-44 ECDH)
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+
+    // WebRTC for P2P data channels
+    implementation("io.getstream:stream-webrtc-android:1.2.2")
+
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 

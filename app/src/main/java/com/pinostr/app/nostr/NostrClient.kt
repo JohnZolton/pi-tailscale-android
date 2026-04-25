@@ -64,27 +64,32 @@ class NostrClient {
         })
     }
 
-    /** Subscribe to events. */
+    /** Subscribe to events. Nostr format: ["REQ", subId, {filter1}, {filter2}, ...] */
     fun subscribe(filters: Map<String, Any?>) {
         val id = "sub_${System.currentTimeMillis()}"
         subId = id
         val req = JsonArray().apply {
-            add(JsonObject().apply {
-                addProperty("type", "REQ")
-                addProperty("id", id)
-                for ((key, value) in filters) {
-                    when (value) {
-                        is String -> addProperty(key, value)
-                        is Number -> addProperty(key, value)
-                        is Boolean -> addProperty(key, value)
-                        is List<*> -> {
-                            val arr = JsonArray()
-                            for (v in value) arr.add(v?.toString())
-                            add(key, arr)
+            add("REQ")
+            add(id)
+            val filterObj = JsonObject()
+            for ((key, value) in filters) {
+                when (value) {
+                    is String -> filterObj.addProperty(key, value)
+                    is Number -> filterObj.addProperty(key, value)
+                    is Boolean -> filterObj.addProperty(key, value)
+                    is List<*> -> {
+                        val arr = JsonArray()
+                        for (v in value) {
+                            when (v) {
+                                is Number -> arr.add(v)
+                                else -> arr.add(v?.toString())
+                            }
                         }
+                        filterObj.add(key, arr)
                     }
                 }
-            })
+            }
+            add(filterObj)
         }
         ws?.send(gson.toJson(req))
         println("[nostr] Subscribed: $id")

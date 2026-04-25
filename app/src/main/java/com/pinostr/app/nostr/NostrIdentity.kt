@@ -35,18 +35,20 @@ data class NostrIdentity(
             return identity
         }
 
-        /** Generate a fresh secp256k1 keypair. */
+        /** Generate a fresh secp256k1 keypair (x-only pubkey, 64 hex chars). */
         fun generate(): NostrIdentity {
             val priv = ByteArray(32).also { SecureRandom().nextBytes(it) }
-            val pub = secp.pubKeyCompress(secp.pubkeyCreate(priv))
-            return NostrIdentity(bytesToHex(priv), bytesToHex(pub))
+            val pub = secp.pubkeyCreate(priv)  // 33 bytes compressed
+            val pubXOnly = pub.copyOfRange(1, 33)  // 32 bytes x-only (Nostr format)
+            return NostrIdentity(bytesToHex(priv), bytesToHex(pubXOnly))
         }
 
-        /** Derive the compressed public key hex from a private key hex. */
+        /** Derive the x-only public key hex from a private key hex. */
         fun derivePubkey(privkeyHex: String): String {
             val priv = hexToBytes(privkeyHex)
-            val pub = secp.pubKeyCompress(secp.pubkeyCreate(priv))
-            return bytesToHex(pub)
+            val pub = secp.pubkeyCreate(priv)  // 33 bytes compressed
+            val pubXOnly = pub.copyOfRange(1, 33)  // 32 bytes x-only
+            return bytesToHex(pubXOnly)
         }
 
         private fun bytesToHex(bytes: ByteArray): String =

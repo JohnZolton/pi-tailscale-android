@@ -68,6 +68,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val gson = Gson()
     private var nostrSignaler: NostrSignaler? = null
+    private var webrtcTransport: WebRtcTransport? = null
 
     init {
         // Load saved threads from disk
@@ -137,27 +138,70 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val signaler = NostrSignaler()
             this.nostrSignaler = signaler
 
-            // WebRTC transport will be created later when we receive
-            // a signaling response from the bridge (currently disabled
-            // until libjingle_peerconnection_so crash is resolved).
-
-            signaler.onOffer = { msg, fromPubkey ->
-                println("[pairing] Received offer from ${fromPubkey.take(12)}")
+            // 3. Create WebRTC transport
+            val transport = WebRtcTransport()
+            try {
+                transport.initialize(ctx)
+                this.webrtcTransport = transport
+            } catch (e: Exception) {
+                println("[pairing] WebRTC init failed: ${e.message} — Nostr-only mode")
             }
 
+            // 4. Wire signaling callbacks
             signaler.onAnswer = { msg, fromPubkey ->
-                println("[pairing] Received answer from ${fromPubkey.take(12)}")
+                println("[pairing] Answer from ${fromPubkey.take(12)}")
+                msg.sdp?.let { transport.setRemoteAnswer(it) }
             }
 
             signaler.onIce = { msg, fromPubkey ->
-                println("[pairing] Received ICE from ${fromPubkey.take(12)}")
+                val parts = (msg.candidate ?: "").split("|")
+                if (parts.size == 2) transport.addIceCandidate(parts[0], parts[1])
             }
 
-            // 3. Start Nostr signaller (connects to relays, subscribes)
-            signaler.start(identity, pairing.relays, pairing.pubkey, viewModelScope)
-            println("[pairing] Nostr signaller started, listening for bridge...")
+            transport.onOpen = {
+                println("[pairing] WebRTC open!")
+                addStatusMessage("P2P connected via WebRTC")
+                client.setTransport(transport)
+                transport.send("{\"type\":\"state_sync\",\"data\":{}}")
+            }
 
-            addStatusMessage("Nostr pairing active. Waiting for bridge to connect...")
+            transport.onError = { err ->
+                println("[pairing] WebRTC error: ${err.message}")
+                addStatusMessage("P2P error: ${err.message}")
+                if (bridgeUrl.isNotBlank()) connect()
+            }
+
+            // 5. Start Nostr signaller
+            signaler.start(identity, pairing.relays, pairing.pubkey, viewModelScope)
+            println("[pairing] Nostr signaller started")
+
+            // 6. Send pairing-request + WebRTC offer
+            signaler.sendMessage(pairing.pubkey, NostrSignaler.SignalingMessage(
+                type = "pairing-request",
+                appPubkey = identity.pubkey,
+                pairingCode = pairing.pairingCode,
+            ))
+
+            transport.onLocalDescription = { sdp, type ->
+                if (type == "offer") {
+                    println("[pairing] Sending WebRTC offer...")
+                    signaler.sendMessage(pairing.pubkey, NostrSignaler.SignalingMessage(
+                        type = "webrtc-offer",
+                        pairingCode = pairing.pairingCode,
+                        sdp = sdp,
+                        sessionPubkey = identity.pubkey,
+                    ))
+                }
+            }
+
+            transport.onLocalCandidate = { candidate, mid ->
+                signaler.sendMessage(pairing.pubkey, NostrSignaler.SignalingMessage(
+                    type = "webrtc-ice", candidate = "$candidate|$mid",
+                ))
+            }
+
+            transport.createOffer(identity.pubkey.take(16))
+            addStatusMessage("Pairing with bridge via Nostr + WebRTC...")
 
         } catch (e: Exception) {
             println("[pairing] Error: ${e.message}")

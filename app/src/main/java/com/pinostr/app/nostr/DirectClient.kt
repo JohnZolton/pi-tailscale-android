@@ -84,13 +84,28 @@ class DirectClient {
     /**
      * Send a message to the bridge (routed as a prompt on the thread).
      */
-    fun sendMessage(text: String) {
+    fun sendMessage(text: String, threadId: String = "default") {
         val msg = JsonObject().apply {
             addProperty("type", "send")
-            add("data", JsonObject().apply { addProperty("text", text) })
+            add("data", JsonObject().apply {
+                addProperty("text", text)
+                addProperty("thread", threadId)
+            })
         }
         ws?.send(gson.toJson(msg))
-        println("[direct] Sent: ${text.take(50)}")
+        println("[direct] Sent: ${text.take(50)} (thread: $threadId)")
+    }
+
+    /**
+     * Request directory listing from the bridge.
+     * Response comes as a `dir_list` frame on the frames channel.
+     */
+    fun listDir(path: String) {
+        val msg = JsonObject().apply {
+            addProperty("type", "list_dir")
+            add("data", JsonObject().apply { addProperty("path", path) })
+        }
+        ws?.send(gson.toJson(msg))
     }
 
     /**

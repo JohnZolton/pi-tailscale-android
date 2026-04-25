@@ -1,6 +1,7 @@
 package com.pinostr.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -33,7 +34,10 @@ fun MainScreen(viewModel: ChatViewModel) {
     val isProcessing by viewModel.isProcessing.collectAsState()
     val botLabel by viewModel.botLabel.collectAsState()
 
+    val threads by viewModel.threads.collectAsState()
+    val activeThreadId by viewModel.activeThreadId.collectAsState()
     var showSettings by remember { mutableStateOf(viewModel.getBridgeUrl().isBlank()) }
+    var showDirPicker by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -42,27 +46,16 @@ fun MainScreen(viewModel: ChatViewModel) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
     }
 
-    if (showSettings) {
-        // ── Bridge URL config screen ──
-        SettingsScreen(
-            currentUrl = viewModel.getBridgeUrl(),
-            isConnected = isConnected,
-            onSave = { url ->
-                viewModel.setBridgeUrl(url)
-                showSettings = false
-            },
-        )
-    } else {
-        // ── Chat screen ──
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color(0xFF1A1A2E))
-                .imePadding()
-                .navigationBarsPadding(),
-        ) {
-            // Top bar
-            TopAppBar(
+    // ── Chat screen (always rendered, settings/dir picker are overlays) ──
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF1A1A2E))
+            .imePadding()
+            .navigationBarsPadding(),
+    ) {
+        // Top bar
+        TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
@@ -88,12 +81,44 @@ fun MainScreen(viewModel: ChatViewModel) {
                         )
                         Spacer(Modifier.width(8.dp))
                     }
+                    IconButton(onClick = { showDirPicker = true }) {
+                        Icon(Icons.Default.Add, "New Agent", tint = Color(0xFF7B68EE))
+                    }
                     IconButton(onClick = { showSettings = true }) {
                         Icon(Icons.Default.Settings, "Settings", tint = Color(0xFF8888AA))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF12121E)),
             )
+
+            // Thread tabs
+            if (threads.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF1A1A2E))
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    for (t in threads) {
+                        val isActive = t.id == activeThreadId
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isActive) Color(0xFF7B68EE) else Color(0xFF252542))
+                                .clickable { viewModel.switchThread(t.id) }
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                        ) {
+                            Text(
+                                text = t.name,
+                                color = if (isActive) Color.White else Color(0xFF8888AA),
+                                fontSize = 12.sp,
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
+                    }
+                }
+            }
 
             // Messages
             if (messages.isEmpty()) {
@@ -172,78 +197,250 @@ fun MainScreen(viewModel: ChatViewModel) {
                     ) {
                         Icon(Icons.Default.Send, "Send", tint = Color.White, modifier = Modifier.size(20.dp))
                     }
-                }
             }
         }
     }
+
+    // ── Directory picker ──
+    if (showDirPicker) {
+        DirectoryPicker(
+            viewModel = viewModel,
+            onSelect = { path ->
+                viewModel.addThread(path)
+                showDirPicker = false
+            },
+            onDismiss = { showDirPicker = false },
+        )
+    }
+
+    // ── Settings dialog ──
+    if (showSettings) {
+        SettingsDialog(
+            currentUrl = viewModel.getBridgeUrl(),
+            isConnected = isConnected,
+            activeThreadDir = threads.find { it.id == activeThreadId }?.dir ?: "",
+            onSave = { url ->
+                viewModel.setBridgeUrl(url)
+                showSettings = false
+            },
+            onDismiss = { showSettings = false },
+        )
+    }
 }
 
-// ── Settings screen ─────────────────────────────────────────────────
+// ── Settings dialog ─────────────────────────────────────────────────
 
 @Composable
-private fun SettingsScreen(
+private fun SettingsDialog(
     currentUrl: String,
     isConnected: Boolean,
+    activeThreadDir: String,
     onSave: (String) -> Unit,
+    onDismiss: () -> Unit,
 ) {
     var url by remember { mutableStateOf(currentUrl) }
 
-    Column(
-        modifier = Modifier.fillMaxSize().background(Color(0xFF1A1A2E)).padding(24.dp),
-    ) {
-        Spacer(Modifier.height(48.dp))
-        Text("pi-nostr", fontWeight = FontWeight.Bold, color = Color(0xFFE0E0F0), fontSize = 28.sp)
-        Spacer(Modifier.height(8.dp))
-        Text("Bridge WebSocket URL", color = Color(0xFF8888AA), fontSize = 14.sp)
-        Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
-            value = url,
-            onValueChange = { url = it },
-            placeholder = { Text("ws://100.x.x.x:3002", color = Color(0xFF555577)) },
-            modifier = Modifier.fillMaxWidth(),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = Color(0xFFE0E0F0),
-                unfocusedTextColor = Color(0xFFE0E0F0),
-                focusedContainerColor = Color(0xFF252542),
-                unfocusedContainerColor = Color(0xFF252542),
-                focusedBorderColor = Color(0xFF7B68EE),
-                unfocusedBorderColor = Color(0xFF333355),
-                cursorColor = Color(0xFF7B68EE),
-            ),
-            shape = RoundedCornerShape(12.dp),
-            singleLine = true,
-        )
-        Spacer(Modifier.height(16.dp))
-        Button(
-            onClick = { if (url.isNotBlank()) onSave(url.trim()) },
-            enabled = url.isNotBlank(),
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7B68EE)),
-            shape = RoundedCornerShape(12.dp),
-        ) {
-            Text("Connect", color = Color.White, fontWeight = FontWeight.SemiBold)
-        }
-        Spacer(Modifier.height(12.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier.size(8.dp).clip(CircleShape).background(
-                    if (isConnected) Color(0xFF66BB6A) else Color(0xFF8888AA)
-                ),
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = if (isConnected) "Connected" else "Disconnected",
-                color = Color(0xFF8888AA),
-                fontSize = 13.sp,
-            )
-        }
-        if (isConnected) {
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = "✅ Ready! Type a message to start.",
-                color = Color(0xFF66BB6A),
-                fontSize = 13.sp,
-            )
-        }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF252542),
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Settings", color = Color(0xFFE0E0F0), fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                TextButton(onClick = onDismiss) { Text("✕", color = Color(0xFF666688), fontSize = 16.sp) }
+            }
+        },
+        text = {
+            Column {
+                // Bridge URL
+                Text("WebSocket URL", color = Color(0xFF8888AA), fontSize = 12.sp)
+                Spacer(Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it },
+                    placeholder = { Text("ws://100.x.x.x:3002", color = Color(0xFF555577)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color(0xFFE0E0F0),
+                        unfocusedTextColor = Color(0xFFE0E0F0),
+                        focusedContainerColor = Color(0xFF1A1A2E),
+                        unfocusedContainerColor = Color(0xFF1A1A2E),
+                        focusedBorderColor = Color(0xFF7B68EE),
+                        unfocusedBorderColor = Color(0xFF333355),
+                        cursorColor = Color(0xFF7B68EE),
+                    ),
+                    shape = RoundedCornerShape(10.dp),
+                )
+                Spacer(Modifier.height(12.dp))
+
+                // Active thread directory
+                if (activeThreadDir.isNotBlank()) {
+                    Text("Project", color = Color(0xFF8888AA), fontSize = 12.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text(activeThreadDir, color = Color(0xFFB0B0D0), fontSize = 13.sp, maxLines = 2)
+                    Spacer(Modifier.height(12.dp))
+                }
+
+                // Status
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(8.dp).clip(CircleShape).background(if (isConnected) Color(0xFF66BB6A) else Color(0xFF8888AA)))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (isConnected) "Connected" else "Disconnected", color = Color(0xFF8888AA), fontSize = 13.sp)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { if (url.isNotBlank()) onSave(url.trim()) },
+                enabled = url.isNotBlank(),
+            ) { Text("Save", color = Color(0xFF7B68EE)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Close", color = Color(0xFF666688)) }
+        },
+    )
+}
+
+// ── Directory picker ────────────────────────────────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DirectoryPicker(
+    viewModel: ChatViewModel,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val dirPath by viewModel.dirPath.collectAsState()
+    val dirEntries by viewModel.dirEntries.collectAsState()
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val savedDir = remember {
+        ctx.getSharedPreferences("pi_nostr", android.content.Context.MODE_PRIVATE)
+            .getString("last_dir", "/") ?: "/"
     }
+    var currentPath by remember { mutableStateOf(savedDir) }
+    var inputText by remember { mutableStateOf("") }
+    var showSuggestions by remember { mutableStateOf(false) }
+
+    // Request initial listing
+    LaunchedEffect(Unit) { viewModel.listDir(currentPath) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF252542),
+        title = { Text("Select Project", color = Color(0xFFE0E0F0), fontWeight = FontWeight.SemiBold) },
+        text = {
+            Column {
+                // Text input with autocomplete
+                OutlinedTextField(
+                    value = inputText,
+                    onValueChange = { text ->
+                        inputText = text
+                        // Auto-list directory as user types a path
+                        if (text.endsWith("/") || text.endsWith("..")) {
+                            val resolved = if (text.startsWith("/")) text else
+                                "$currentPath/${text}".replace("//", "/")
+                            currentPath = pathDir(resolved)
+                            viewModel.listDir(currentPath)
+                            inputText = pathLast(resolved)
+                        }
+                    },
+                    placeholder = { Text("Type or browse to a path...", color = Color(0xFF555577), fontSize = 13.sp) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color(0xFFE0E0F0),
+                        unfocusedTextColor = Color(0xFFE0E0F0),
+                        focusedContainerColor = Color(0xFF1A1A2E),
+                        unfocusedContainerColor = Color(0xFF1A1A2E),
+                        focusedBorderColor = Color(0xFF7B68EE),
+                        unfocusedBorderColor = Color(0xFF333355),
+                        cursorColor = Color(0xFF7B68EE),
+                    ),
+                    shape = RoundedCornerShape(10.dp),
+                )
+                Spacer(Modifier.height(4.dp))
+
+                // Current path
+                Text(
+                    text = currentPath,
+                    color = Color(0xFF8888AA),
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                )
+                Spacer(Modifier.height(8.dp))
+
+                if (dirEntries.isEmpty() && dirPath.isNotBlank()) {
+                    val filteredEmpty = inputText.isNotBlank() && dirEntries.none { it.name.contains(inputText, ignoreCase = true) }
+                    Text(
+                        if (filteredEmpty) "No matches for \"$inputText\"" else "No subdirectories",
+                        color = Color(0xFF555577),
+                        fontSize = 13.sp,
+                    )
+                } else {
+                    LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                        // Up button
+                        if (currentPath != "/") {
+                            item {
+                                TextButton(onClick = {
+                                    val parent = currentPath.substringBeforeLast("/").ifEmpty { "/" }
+                                    currentPath = parent.ifEmpty { "/" }
+                                    inputText = ""
+                                    viewModel.listDir(currentPath)
+                                }) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.ArrowUpward, null, tint = Color(0xFF7B68EE), modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("..", color = Color(0xFF7B68EE), fontSize = 13.sp)
+                                    }
+                                }
+                            }
+                        }
+
+                        val filtered = if (inputText.isBlank()) dirEntries else
+                            dirEntries.filter { it.name.contains(inputText, ignoreCase = true) }
+
+                        items(filtered, key = { it.path }) { entry ->
+                            TextButton(
+                                onClick = {
+                                    currentPath = entry.path
+                                    inputText = ""
+                                    viewModel.listDir(entry.path)
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Icon(Icons.Default.Folder, null, tint = Color(0xFF8888AA), modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = entry.name,
+                                    color = Color(0xFFE0E0F0),
+                                    fontSize = 13.sp,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSelect(currentPath) }) {
+                Text("Select", color = Color(0xFF7B68EE))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = Color(0xFF666688))
+            }
+        },
+    )
+}
+
+private fun pathDir(p: String): String {
+    val i = p.lastIndexOf('/')
+    return if (i <= 0) "/" else p.substring(0, i)
+}
+
+private fun pathLast(p: String): String {
+    val i = p.lastIndexOf('/')
+    return if (i < 0) p else p.substring(i + 1)
 }

@@ -54,7 +54,7 @@ fun ToolCallCard(
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(horizontal = 12.dp, vertical = 3.dp),
         shape = RoundedCornerShape(10.dp),
         colors = CardDefaults.cardColors(containerColor = bgColor),
     ) {

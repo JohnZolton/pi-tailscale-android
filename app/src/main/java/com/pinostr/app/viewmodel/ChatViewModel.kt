@@ -138,70 +138,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val signaler = NostrSignaler()
             this.nostrSignaler = signaler
 
-            // 3. Create WebRTC transport
-            val transport = WebRtcTransport()
-            try {
-                transport.initialize(ctx)
-                this.webrtcTransport = transport
-            } catch (e: Exception) {
-                println("[pairing] WebRTC init failed: ${e.message} — Nostr-only mode")
+            // Wire incoming message handlers
+            signaler.onPairingRequest = { msg, fromPubkey ->
+                println("[pairing] Bridge acknowledged pairing!")
+                addStatusMessage("✅ Pairing confirmed with bridge!")
             }
 
-            // 4. Wire signaling callbacks
-            signaler.onAnswer = { msg, fromPubkey ->
-                println("[pairing] Answer from ${fromPubkey.take(12)}")
-                msg.sdp?.let { transport.setRemoteAnswer(it) }
-            }
-
-            signaler.onIce = { msg, fromPubkey ->
-                val parts = (msg.candidate ?: "").split("|")
-                if (parts.size == 2) transport.addIceCandidate(parts[0], parts[1])
-            }
-
-            transport.onOpen = {
-                println("[pairing] WebRTC open!")
-                addStatusMessage("P2P connected via WebRTC")
-                client.setTransport(transport)
-                transport.send("{\"type\":\"state_sync\",\"data\":{}}")
-            }
-
-            transport.onError = { err ->
-                println("[pairing] WebRTC error: ${err.message}")
-                addStatusMessage("P2P error: ${err.message}")
-                if (bridgeUrl.isNotBlank()) connect()
-            }
-
-            // 5. Start Nostr signaller
+            // 3. Start Nostr signaller (connects to relays, subscribes)
             signaler.start(identity, pairing.relays, pairing.pubkey, viewModelScope)
             println("[pairing] Nostr signaller started")
 
-            // 6. Send pairing-request + WebRTC offer
+            // 4. Send pairing-request to bridge
             signaler.sendMessage(pairing.pubkey, NostrSignaler.SignalingMessage(
                 type = "pairing-request",
                 appPubkey = identity.pubkey,
                 pairingCode = pairing.pairingCode,
             ))
-
-            transport.onLocalDescription = { sdp, type ->
-                if (type == "offer") {
-                    println("[pairing] Sending WebRTC offer...")
-                    signaler.sendMessage(pairing.pubkey, NostrSignaler.SignalingMessage(
-                        type = "webrtc-offer",
-                        pairingCode = pairing.pairingCode,
-                        sdp = sdp,
-                        sessionPubkey = identity.pubkey,
-                    ))
-                }
-            }
-
-            transport.onLocalCandidate = { candidate, mid ->
-                signaler.sendMessage(pairing.pubkey, NostrSignaler.SignalingMessage(
-                    type = "webrtc-ice", candidate = "$candidate|$mid",
-                ))
-            }
-
-            transport.createOffer(identity.pubkey.take(16))
-            addStatusMessage("Pairing with bridge via Nostr + WebRTC...")
+            addStatusMessage("Pairing sent over Nostr...")
 
         } catch (e: Exception) {
             println("[pairing] Error: ${e.message}")

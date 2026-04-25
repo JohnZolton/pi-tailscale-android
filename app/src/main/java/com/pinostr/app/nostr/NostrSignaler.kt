@@ -185,6 +185,7 @@ class NostrSignaler {
             "webrtc-answer" -> onAnswer?.invoke(msg, event.pubkey)
             "webrtc-ice" -> onIce?.invoke(msg, event.pubkey)
             "pairing-request" -> onPairingRequest?.invoke(msg, event.pubkey)
+            "pairing-ack" -> onPairingRequest?.invoke(msg, event.pubkey)
         }
     }
 

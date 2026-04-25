@@ -148,10 +148,12 @@ class NostrClient {
                     _events.trySend(event)
                 }
                 "EOSE" -> {
-                    println("[nostr] EOSE for ${arr.getOrNull(1)?.asString}")
+                    val eoseId = if (arr.size() > 1) arr[1]?.asString else null
+                    println("[nostr] EOSE for $eoseId")
                 }
                 "NOTICE" -> {
-                    println("[nostr] NOTICE: ${arr.getOrNull(1)?.asString}")
+                    val notice = if (arr.size() > 1) arr[1]?.asString else null
+                    println("[nostr] NOTICE: $notice")
                 }
             }
         } catch (e: Exception) {

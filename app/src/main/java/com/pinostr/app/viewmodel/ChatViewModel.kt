@@ -68,7 +68,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val gson = Gson()
     private var nostrSignaler: NostrSignaler? = null
-    private var webrtcTransport: WebRtcTransport? = null
 
     init {
         // Load saved threads from disk
@@ -134,73 +133,31 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val identity = NostrIdentity.loadOrCreate(ctx)
             println("[pairing] App pubkey: ${identity.pubkey.take(12)}...")
 
-            // 2. Create WebRTC transport
-            val transport = WebRtcTransport()
-            transport.initialize(ctx)
-            this.webrtcTransport = transport
-
-            // 3. Create Nostr signaller and wire callbacks
+            // 2. Create Nostr signaller
             val signaler = NostrSignaler()
             this.nostrSignaler = signaler
 
+            // WebRTC transport will be created later when we receive
+            // a signaling response from the bridge (currently disabled
+            // until libjingle_peerconnection_so crash is resolved).
+
+            signaler.onOffer = { msg, fromPubkey ->
+                println("[pairing] Received offer from ${fromPubkey.take(12)}")
+            }
+
             signaler.onAnswer = { msg, fromPubkey ->
                 println("[pairing] Received answer from ${fromPubkey.take(12)}")
-                msg.sdp?.let { transport.setRemoteAnswer(it) }
             }
 
             signaler.onIce = { msg, fromPubkey ->
-                val parts = (msg.candidate ?: "").split("|")
-                if (parts.size == 2) {
-                    transport.addIceCandidate(parts[0], parts[1])
-                }
+                println("[pairing] Received ICE from ${fromPubkey.take(12)}")
             }
 
-            // 4. Wire transport open → swap into client
-            transport.onOpen = {
-                println("[pairing] WebRTC DataChannel open!")
-                addStatusMessage("P2P connected via WebRTC")
-                // Disconnect WebSocket and use WebRTC transport
-                client.setTransport(transport)
-                // Send state_sync to trigger bridge welcome
-                transport.send("{\"type\":\"state_sync\",\"data\":{}}")
-                addStatusMessage("Connected via Nostr + WebRTC. Select a project to start.")
-            }
-
-            transport.onError = { err ->
-                println("[pairing] WebRTC error: ${err.message}")
-                addStatusMessage("P2P failed: ${err.message}. Falling back to WebSocket.")
-                if (bridgeUrl.isNotBlank()) {
-                    connect()
-                }
-            }
-
-            // 5. Start Nostr signaller (connects to relays, subscribes)
+            // 3. Start Nostr signaller (connects to relays, subscribes)
             signaler.start(identity, pairing.relays, pairing.pubkey, viewModelScope)
-            println("[pairing] Nostr signaller started, creating WebRTC offer...")
+            println("[pairing] Nostr signaller started, listening for bridge...")
 
-            // 6. Generate WebRTC offer and send via Nostr
-            transport.onLocalDescription = { sdp, type ->
-                if (type == "offer") {
-                    println("[pairing] Sending WebRTC offer...")
-                    signaler.sendMessage(pairing.pubkey, NostrSignaler.SignalingMessage(
-                        type = "webrtc-offer",
-                        pairingCode = pairing.pairingCode,
-                        sdp = sdp,
-                        sessionPubkey = identity.pubkey,
-                    ))
-                }
-            }
-
-            transport.onLocalCandidate = { candidate, mid ->
-                signaler.sendMessage(pairing.pubkey, NostrSignaler.SignalingMessage(
-                    type = "webrtc-ice",
-                    candidate = "$candidate|$mid",
-                ))
-            }
-
-            // 7. Create the WebRTC offer (triggers onLocalDescription)
-            transport.createOffer(identity.pubkey.take(16))
-            addStatusMessage("Pairing with bridge via Nostr...")
+            addStatusMessage("Nostr pairing active. Waiting for bridge to connect...")
 
         } catch (e: Exception) {
             println("[pairing] Error: ${e.message}")

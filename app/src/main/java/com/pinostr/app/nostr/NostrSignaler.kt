@@ -117,7 +117,9 @@ class NostrSignaler {
             "sig" to sig,
         )
 
+        println("[signaler] Publishing ${msg.type} (event: ${eventId.take(16)}...)")
         client.publish(event)
+        println("[signaler] Publish sent")
         println("[signaler] Sent ${msg.type} to ${toPubkey.take(12)}")
     }
 

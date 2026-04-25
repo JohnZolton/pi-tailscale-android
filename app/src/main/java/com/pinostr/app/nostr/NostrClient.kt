@@ -42,22 +42,24 @@ class NostrClient {
     /** Connect to a relay URL (wss://...). */
     fun connect(url: String, scope: CoroutineScope) {
         this.scope = scope
+        println("[nostr] Connecting to $url...")
         val request = Request.Builder().url(url).build()
         ws = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                println("[nostr] Connected to $url")
+                println("[nostr] ✅ Connected to $url")
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                println("[nostr] 📩 Message from relay: ${text.take(80)}...")
                 handleMessage(text)
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                println("[nostr] Closed: $reason")
+                println("[nostr] ❌ Closed: $reason (code $code)")
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                println("[nostr] Error: ${t.message}")
+                println("[nostr] 💥 Error: ${t.message}")
             }
         })
     }

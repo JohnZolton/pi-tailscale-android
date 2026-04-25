@@ -17,6 +17,7 @@ data class ChatMessage(
 
     // Stream event metadata
     val eventType: EventType = EventType.TEXT,
+    val toolCallId: String = "",
     val toolName: String = "",
     val toolStatus: String = "",
     val diffContent: String = "",

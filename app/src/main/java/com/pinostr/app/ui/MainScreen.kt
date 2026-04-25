@@ -73,14 +73,6 @@ fun MainScreen(viewModel: ChatViewModel) {
                     }
                 },
                 actions = {
-                    if (isProcessing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            color = Color(0xFF7B68EE),
-                            strokeWidth = 2.dp,
-                        )
-                        Spacer(Modifier.width(8.dp))
-                    }
                     IconButton(onClick = { showDirPicker = true }) {
                         Icon(Icons.Default.Add, "New Agent", tint = Color(0xFF7B68EE))
                     }
@@ -107,13 +99,30 @@ fun MainScreen(viewModel: ChatViewModel) {
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(if (isActive) Color(0xFF7B68EE) else Color(0xFF252542))
                                 .clickable { viewModel.switchThread(t.id) }
-                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
                         ) {
-                            Text(
-                                text = t.name,
-                                color = if (isActive) Color.White else Color(0xFF8888AA),
-                                fontSize = 12.sp,
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = t.name,
+                                    color = if (isActive) Color.White else Color(0xFF8888AA),
+                                    fontSize = 12.sp,
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                if (t.isProcessing) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(10.dp),
+                                        color = if (isActive) Color.White else Color(0xFF7B68EE),
+                                        strokeWidth = 1.5.dp,
+                                    )
+                                } else if (t.unread) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(0xFF66BB6A)),
+                                    )
+                                }
+                            }
                         }
                         Spacer(Modifier.width(6.dp))
                     }
@@ -190,9 +199,9 @@ fun MainScreen(viewModel: ChatViewModel) {
                     Spacer(Modifier.width(8.dp))
                     IconButton(
                         onClick = { sendMsg() },
-                        enabled = inputText.isNotBlank() && !isProcessing,
+                        enabled = inputText.isNotBlank(),
                         modifier = Modifier.size(44.dp).clip(CircleShape).background(
-                            if (inputText.isNotBlank() && !isProcessing) Color(0xFF7B68EE) else Color(0xFF333355)
+                            if (inputText.isNotBlank()) Color(0xFF7B68EE) else Color(0xFF333355)
                         ),
                     ) {
                         Icon(Icons.Default.Send, "Send", tint = Color.White, modifier = Modifier.size(20.dp))

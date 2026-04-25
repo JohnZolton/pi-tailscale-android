@@ -13,7 +13,7 @@ import kotlinx.coroutines.launch
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     // ── Threads ──
-    data class ThreadData(val id: String, val name: String, val dir: String, val messages: List<ChatMessage>)
+    data class ThreadData(val id: String, val name: String, val dir: String, val messages: List<ChatMessage>, val isProcessing: Boolean = false, val unread: Boolean = false)
     private val _threads = MutableStateFlow<List<ThreadData>>(emptyList())
     val threads: StateFlow<List<ThreadData>> = _threads.asStateFlow()
     private val _activeThreadId = MutableStateFlow("")
@@ -96,6 +96,46 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun handleFrame(frame: DirectClient.StreamFrame) {
+        // Route frame to the correct thread
+        val frameThread = frame.data["thread"]?.toString() ?: ""
+        if (frameThread.isNotBlank() && frameThread != _activeThreadId.value && frameThread != "default") {
+            // Background thread — store text deltas and turn_complete
+            _threads.value = _threads.value.map {
+                if (it.id == frameThread) {
+                    var t = it
+                    if (frame.type == "text_delta") {
+                        val text = frame.data["text"]?.toString() ?: ""
+                        val more = (frame.data["more"] as? Boolean) ?: true
+                        val msgs = t.messages.toMutableList()
+                        val lastAsst = msgs.indexOfLast { m -> m.role == ChatMessage.Role.ASSISTANT && m.eventType == ChatMessage.EventType.TEXT }
+                        if (lastAsst >= 0) {
+                            msgs[lastAsst] = msgs[lastAsst].copy(text = text, isStreaming = more)
+                        } else if (text.isNotBlank()) {
+                            msgs.add(ChatMessage(role = ChatMessage.Role.ASSISTANT, eventType = ChatMessage.EventType.TEXT, text = text, isStreaming = more))
+                        }
+                        t = t.copy(messages = msgs)
+                    }
+                    if (frame.type == "tool_call") {
+                        val callId = frame.data["id"]?.toString() ?: ""
+                        val name = frame.data["name"]?.toString() ?: ""
+                        val status = frame.data["status"]?.toString() ?: "running"
+                        val args = frame.data["args"]?.toString() ?: ""
+                        val msgs = t.messages.toMutableList()
+                        val existingIdx = msgs.indexOfLast { m -> m.toolCallId == callId }
+                        if (existingIdx >= 0) {
+                            msgs[existingIdx] = msgs[existingIdx].copy(toolStatus = status, text = args.ifEmpty { msgs[existingIdx].text })
+                        } else {
+                            msgs.add(ChatMessage(role = ChatMessage.Role.ASSISTANT, eventType = ChatMessage.EventType.TOOL_CALL, toolCallId = callId, toolName = name, toolStatus = status, text = args, isStreaming = true))
+                        }
+                        t = t.copy(messages = msgs)
+                    }
+                    if (frame.type == "turn_complete") t = t.copy(isProcessing = false, unread = true)
+                    t
+                } else it
+            }
+            return
+        }
+
         when (frame.type) {
             "dir_list" -> {
                 val path = frame.data["path"]?.toString() ?: ""
@@ -178,6 +218,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     val msg = ChatMessage(
                         role = ChatMessage.Role.ASSISTANT,
                         eventType = ChatMessage.EventType.TOOL_CALL,
+                        toolCallId = id,
                         toolName = name,
                         toolStatus = status,
                         text = args,
@@ -226,7 +267,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             "turn_complete" -> {
-                // Mark thinking as inactive (replace dots with "Thought")
                 if (currentThinkingMsg != null) {
                     val stopped = currentThinkingMsg!!.copy(isStreaming = false)
                     updateMessage(currentThinkingMsg!!.id) { stopped }
@@ -236,6 +276,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 currentThinkingMsg = null
                 currentToolCallMsgs.clear()
                 _isProcessing.value = false
+                // Persist processing state to thread
+                val tid = _activeThreadId.value
+                if (tid.isNotBlank()) {
+                    _threads.value = _threads.value.map {
+                        if (it.id == tid) it.copy(isProcessing = false) else it
+                    }
+                }
             }
 
             "error" -> {
@@ -259,7 +306,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val thread = ThreadData(id = id, name = name.ifEmpty { "root" }, dir = dir, messages = emptyList())
         _threads.value = _threads.value + thread
         switchThread(id)
-        // Send /dir to bridge to set this thread's working directory
         _isProcessing.value = false
         client.sendMessage("/dir $dir", id)
     }
@@ -269,6 +315,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val thread = _threads.value.find { it.id == id } ?: return
         _activeThreadId.value = id
         _messages.value = thread.messages
+        _isProcessing.value = thread.isProcessing
+        // Clear unread when viewing
+        _threads.value = _threads.value.map {
+            if (it.id == id) it.copy(unread = false) else it
+        }
         currentAssistantMsg = null
         currentThinkingMsg = null
         currentToolCallMsgs.clear()
@@ -281,6 +332,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // Don't capture commands as chat messages
         if (!text.startsWith("/") && !text.startsWith("!")) {
             addMessage(ChatMessage(role = ChatMessage.Role.USER, text = text))
+            // Set this thread as processing
+            _threads.value = _threads.value.map {
+                if (it.id == tid) it.copy(isProcessing = true) else it
+            }
         }
         _isProcessing.value = true
         client.sendMessage(text, tid)

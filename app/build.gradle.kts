@@ -53,22 +53,18 @@ dependencies {
     // OkHttp for WebSocket relay connections
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-    // BouncyCastle for secp256k1 ECDH
-    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
-
     // Gson for JSON
     implementation("com.google.code.gson:gson:2.11.0")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
-    // Security (encrypted shared prefs for key storage)
-    implementation("androidx.security:security-crypto:1.1.0-alpha06")
-
-    // Markdown rendering
+    // Markdown rendering (tables, code, lists — the real deal)
     implementation("io.noties.markwon:core:4.6.2")
     implementation("io.noties.markwon:ext-strikethrough:4.6.2")
     implementation("io.noties.markwon:html:4.6.2")
+
+
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

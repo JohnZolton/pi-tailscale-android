@@ -1,18 +1,18 @@
 package com.pinostr.app.nostr
 
 import android.util.Base64
+import org.bouncycastle.crypto.AsymmetricCipherKeyPair
+import org.bouncycastle.crypto.agreement.ECDHBasicAgreement
 import org.bouncycastle.crypto.engines.ChaCha7539Engine
-import org.bouncycastle.crypto.params.KeyParameter
-import org.bouncycastle.crypto.params.ParametersWithIV
-import org.bouncycastle.jce.interfaces.ECPrivateKey
-import org.bouncycastle.jce.interfaces.ECPublicKey
-import org.bouncycastle.jce.spec.ECNamedCurveParameterSpec
-import org.bouncycastle.jce.spec.ECPrivateKeySpec
-import org.bouncycastle.jce.spec.ECPublicKeySpec
+import org.bouncycastle.crypto.generators.ECKeyPairGenerator
+import org.bouncycastle.crypto.params.*
+import org.bouncycastle.crypto.params.ECDomainParameters
+import org.bouncycastle.crypto.params.ECPrivateKeyParameters
+import org.bouncycastle.crypto.params.ECPublicKeyParameters
+import org.bouncycastle.crypto.signers.ECDSASigner
+import org.bouncycastle.math.ec.ECPoint
 import java.math.BigInteger
-import java.security.KeyFactory
 import java.security.SecureRandom
-import javax.crypto.KeyAgreement
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
@@ -24,8 +24,12 @@ import javax.crypto.spec.SecretKeySpec
  */
 object Nip44 {
 
-    private val CURVE: ECNamedCurveParameterSpec by lazy {
-        org.bouncycastle.jce.ECNamedCurveTable.getParameterSpec("secp256k1")
+    // secp256k1 curve parameters (Bouncy Castle lightweight API)
+    private val CURVE by lazy {
+        org.bouncycastle.asn1.sec.SECNamedCurves.getByName("secp256k1")
+    }
+    private val DOMAIN by lazy {
+        ECDomainParameters(CURVE.curve, CURVE.g, CURVE.n, CURVE.h)
     }
 
     /** Minimum and maximum plaintext sizes per NIP-44 spec. */
@@ -121,28 +125,25 @@ object Nip44 {
 
     // ── Private helpers ──
 
-    /** ECDH shared secret x-coordinate (32 bytes). */
+    /** ECDH shared secret x-coordinate (32 bytes) using BC lightweight API. */
     private fun ecdhSharedX(privkeyHex: String, pubkeyHex: String): ByteArray {
-        val keyFactory = KeyFactory.getInstance("EC", "BC")
-
-        // Private key
         val d = BigInteger(privkeyHex, 16)
-        val privSpec = ECPrivateKeySpec(d, CURVE)
-        val privKey = keyFactory.generatePrivate(privSpec) as ECPrivateKey
+        val privParams = ECPrivateKeyParameters(d, DOMAIN)
 
-        // Public key (compressed hex → point)
         val point = CURVE.curve.decodePoint(hexToBytes(pubkeyHex))
-        val pubSpec = ECPublicKeySpec(point, CURVE)
-        val pubKey = keyFactory.generatePublic(pubSpec) as ECPublicKey
+        val pubParams = ECPublicKeyParameters(point, DOMAIN)
 
-        // ECDH agreement
-        val agreement = KeyAgreement.getInstance("ECDH", "BC")
-        agreement.init(privKey)
-        agreement.doPhase(pubKey, true)
+        val agreement = ECDHBasicAgreement()
+        agreement.init(privParams)
+        val shared = agreement.calculateAgreement(pubParams)
 
-        // NIP-44: use subarray(1, 33) of the shared secret (x coordinate only)
-        val secret = agreement.generateSecret()
-        return secret.copyOfRange(1, 33)
+        // Convert to exactly 32 bytes (big-endian, unsigned, zero-padded)
+        val bytes = shared.toByteArray()
+        return when {
+            bytes.size == 32 -> bytes
+            bytes.size > 32 -> bytes.copyOfRange(bytes.size - 32, bytes.size)  // trim leading zero
+            else -> ByteArray(32 - bytes.size) + bytes  // pad with zeros
+        }
     }
 
     /** HKDF-extract using SHA-256. */

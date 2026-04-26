@@ -123,84 +123,39 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun initNostrPairing(json: String) {
-        if (pairingInitiated) {
-            println("[pairing] Already paired, skipping")
-            return
-        }
+        if (pairingInitiated) return
         pairingInitiated = true
         try {
             val pairing = gson.fromJson(json, BridgePairing::class.java)
             if (pairing.pubkey.isBlank() || pairing.relays.isEmpty()) {
-                addStatusMessage("Invalid pairing data: missing pubkey or relays")
+                addStatusMessage("Invalid pairing data")
                 return
             }
 
             val ctx = getApplication<android.app.Application>()
-
-            // 1. Create app identity (load existing or generate new)
             val identity = NostrIdentity.loadOrCreate(ctx)
-            println("[pairing] App pubkey: ${identity.pubkey.take(12)}...")
+            println("[nostr] App pubkey: ${identity.pubkey.take(12)}...")
 
-            // 2. Create Nostr signaller
-            val signaler = NostrSignaler()
-            this.nostrSignaler = signaler
-
-            // Wire incoming message handlers
-            signaler.onPairingRequest = { msg, fromPubkey ->
-                println("[pairing] Bridge acknowledged pairing!")
-                addStatusMessage("✅ Pairing confirmed with bridge!")
-                setupNostrTransport(ctx, identity, pairing, signaler)
-            }
-
-            // 3. Start Nostr signaller (connects to relays, subscribes)
-            signaler.start(identity, pairing.relays, pairing.pubkey, viewModelScope)
-            println("[pairing] Nostr signaller started")
-
-            // 4. Send pairing-request to bridge
-            signaler.sendMessage(pairing.pubkey, NostrSignaler.SignalingMessage(
-                type = "pairing-request",
-                appPubkey = identity.pubkey,
-                pairingCode = pairing.pairingCode,
-            ))
-            addStatusMessage("Pairing sent over Nostr...")
-
-        } catch (e: Exception) {
-            println("[pairing] Error: ${e.message}")
-            addStatusMessage("Pairing failed: ${e.message}")
-        }
-    }
-
-    /** Set up Nostr DM transport after pairing is confirmed. */
-    private fun setupNostrTransport(
-        ctx: android.app.Application,
-        identity: NostrIdentity,
-        pairing: BridgePairing,
-        signaler: NostrSignaler,
-    ) {
-        try {
-            addStatusMessage("Connecting via Nostr DMs...")
-
+            // Create Nostr transport — sends agent frames as encrypted DMs
             val transport = NostrTransport(identity, pairing.pubkey, pairing.relays)
             this.nostrTransport = transport
 
-            // When Nostr transport is ready, swap it into the client
             transport.onOpen = {
-                println("[pairing] Nostr transport ready, swapping into client")
-                addStatusMessage("✅ Connected via Nostr relays!")
+                println("[nostr] Transport ready, swapping into client")
                 client.setTransport(transport)
-                transport.send("{\"type\":\"state_sync\",\"data\":{}}")
+                addStatusMessage("✅ Connected via Nostr! Select a project.")
             }
 
             transport.onError = { err ->
-                println("[pairing] Nostr transport error: ${err.message}")
+                println("[nostr] Transport error: ${err.message}")
                 if (bridgeUrl.isNotBlank()) connect(true)
             }
 
             transport.start(viewModelScope)
 
         } catch (e: Exception) {
-            println("[pairing] Nostr transport init failed: ${e.message}")
-            addStatusMessage("Nostr transport failed: ${e.message}. Use WebSocket.")
+            println("[nostr] Init failed: ${e.message}")
+            addStatusMessage("Nostr failed: ${e.message}. Use WebSocket.")
         }
     }
 

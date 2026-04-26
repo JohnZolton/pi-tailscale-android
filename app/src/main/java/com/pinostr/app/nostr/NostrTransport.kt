@@ -1,6 +1,7 @@
 package com.pinostr.app.nostr
 
 import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import fr.acinq.secp256k1.Secp256k1
 import fr.acinq.secp256k1.jni.NativeSecp256k1AndroidLoader
 import kotlinx.coroutines.*
@@ -8,11 +9,11 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 
 /**
- * Nostr DM transport — sends/receives agent frames as NIP-44 encrypted
- * Nostr events. Implements the Transport interface so DirectClient can
- * use it transparently, replacing WebSocket entirely.
+ * Nostr DM transport — sends user messages and receives batched agent
+ * responses as NIP-44 encrypted Nostr events.
  *
- * No NAT issues, no port forwarding, no native libraries.
+ * The bridge buffers streaming frames and sends the complete response
+ * as a single Nostr DM. No streaming over relays.
  */
 class NostrTransport(
     private val identity: NostrIdentity,
@@ -37,20 +38,16 @@ class NostrTransport(
 
     fun start(scope: CoroutineScope) {
         this.scope = scope
-
-        // Connect to first relay
         val relayUrl = relays.firstOrNull() ?: return
         val c = NostrClient()
         c.connect(relayUrl, scope)
         this.client = c
 
-        // Subscribe for events from the bridge
         scope.launch {
             delay(3000)
             c.subscribe(mapOf("kinds" to listOf(1059), "#p" to listOf(identity.pubkey)))
         }
 
-        // Listen for incoming events
         job = scope.launch {
             for (event in c.events) {
                 if (event.pubkey != bridgePubkey) continue
@@ -58,16 +55,16 @@ class NostrTransport(
             }
         }
 
-        // Signal connection
         scope.launch {
             delay(4000)
             onOpen?.invoke()
         }
     }
 
+    /** Send user message as encrypted Nostr DM. */
     override fun send(data: String) {
         val client = this.client ?: return
-        val msg = gson.toJson(mapOf("type" to "frame", "data" to data))
+        val msg = gson.toJson(mapOf("type" to "send", "data" to mapOf("text" to data, "thread" to "nostr")))
         val convKey = getConversationKey(identity.privkey, bridgePubkey)
         val ciphertext = Nip44.encrypt(msg, convKey)
         val eventId = computeEventId(identity.pubkey, System.currentTimeMillis() / 1000, ciphertext)
@@ -92,17 +89,23 @@ class NostrTransport(
 
     // ── Private ──
 
+    @Suppress("UNCHECKED_CAST")
     private fun handleEvent(event: NostrClient.NostrEvent) {
         try {
             val convKey = getConversationKey(identity.privkey, event.pubkey)
             val plain = Nip44.decrypt(event.content, convKey)
-            val parsed = gson.fromJson(plain, Map::class.java)
+            val parsed = gson.fromJson(plain, Map::class.java) as Map<String, Any?>
+
+            // Bridge sends frames as: { type: "frame", frames: [{type, data}, ...] }
             if (parsed["type"] == "frame") {
-                val frameData = parsed["data"] as? String
-                frameData?.let { onMessage?.invoke(it) }
+                val frames = parsed["frames"] as? List<Map<String, Any?>> ?: return
+                for (f in frames) {
+                    val raw = gson.toJson(f) // { "type": "...", "data": {...} }
+                    onMessage?.invoke(raw)
+                }
             }
         } catch (e: Exception) {
-            // ignore
+            println("[nostr-transport] handle error: ${e.message}")
         }
     }
 

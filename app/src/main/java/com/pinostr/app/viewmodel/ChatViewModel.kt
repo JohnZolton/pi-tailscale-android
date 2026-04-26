@@ -68,7 +68,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val gson = Gson()
     private var nostrSignaler: NostrSignaler? = null
-    private var webrtcTransport: WebRtcTransport? = null
+    private var nostrTransport: NostrTransport? = null
     private var bridgePairing: BridgePairing? = null
     private var pairingInitiated = false
 
@@ -149,7 +149,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             signaler.onPairingRequest = { msg, fromPubkey ->
                 println("[pairing] Bridge acknowledged pairing!")
                 addStatusMessage("✅ Pairing confirmed with bridge!")
-                initiateWebRtc(ctx, identity, pairing, signaler)
+                setupNostrTransport(ctx, identity, pairing, signaler)
             }
 
             // 3. Start Nostr signaller (connects to relays, subscribes)
@@ -170,68 +170,37 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Initiate WebRTC connection after Nostr pairing is confirmed. */
-    private fun initiateWebRtc(
+    /** Set up Nostr DM transport after pairing is confirmed. */
+    private fun setupNostrTransport(
         ctx: android.app.Application,
         identity: NostrIdentity,
         pairing: BridgePairing,
         signaler: NostrSignaler,
     ) {
         try {
-            addStatusMessage("Initiating WebRTC P2P connection...")
+            addStatusMessage("Connecting via Nostr DMs...")
 
-            val transport = WebRtcTransport()
-            transport.initialize(ctx)
-            this.webrtcTransport = transport
+            val transport = NostrTransport(identity, pairing.pubkey, pairing.relays)
+            this.nostrTransport = transport
 
-            // Wire WebRTC signaling callbacks
-            signaler.onAnswer = { msg, fromPubkey ->
-                println("[pairing] Answer from ${fromPubkey.take(12)}")
-                msg.sdp?.let { transport.setRemoteAnswer(it) }
-            }
-
-            signaler.onIce = { msg, fromPubkey ->
-                val parts = (msg.candidate ?: "").split("|")
-                if (parts.size == 2) transport.addIceCandidate(parts[0], parts[1])
-            }
-
+            // When Nostr transport is ready, swap it into the client
             transport.onOpen = {
-                println("[pairing] WebRTC DataChannel open!")
-                addStatusMessage("✅ P2P connected via WebRTC!")
+                println("[pairing] Nostr transport ready, swapping into client")
+                addStatusMessage("✅ Connected via Nostr relays!")
                 client.setTransport(transport)
                 transport.send("{\"type\":\"state_sync\",\"data\":{}}")
             }
 
             transport.onError = { err ->
-                println("[pairing] WebRTC error: ${err.message}")
-                addStatusMessage("P2P failed: ${err.message}")
+                println("[pairing] Nostr transport error: ${err.message}")
                 if (bridgeUrl.isNotBlank()) connect(true)
             }
 
-            // Generate WebRTC offer and send over Nostr
-            transport.onLocalDescription = { sdp, type ->
-                if (type == "offer") {
-                    println("[pairing] Sending WebRTC offer...")
-                    signaler.sendMessage(pairing.pubkey, NostrSignaler.SignalingMessage(
-                        type = "webrtc-offer",
-                        pairingCode = pairing.pairingCode,
-                        sdp = sdp,
-                        sessionPubkey = identity.pubkey,
-                    ))
-                }
-            }
-
-            transport.onLocalCandidate = { candidate, mid ->
-                signaler.sendMessage(pairing.pubkey, NostrSignaler.SignalingMessage(
-                    type = "webrtc-ice", candidate = "$candidate|$mid",
-                ))
-            }
-
-            transport.createOffer(identity.pubkey.take(16))
+            transport.start(viewModelScope)
 
         } catch (e: Exception) {
-            println("[pairing] WebRTC init failed: ${e.message}")
-            addStatusMessage("P2P not available: ${e.message}. Use Tailscale WebSocket.")
+            println("[pairing] Nostr transport init failed: ${e.message}")
+            addStatusMessage("Nostr transport failed: ${e.message}. Use WebSocket.")
         }
     }
 

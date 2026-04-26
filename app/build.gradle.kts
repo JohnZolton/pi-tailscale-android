@@ -59,8 +59,7 @@ dependencies {
     // secp256k1 via libsecp256k1 (Bitcoin Core native, JNI for Android)
     implementation("fr.acinq.secp256k1:secp256k1-kmp-jni-android:0.10.0")
 
-    // WebRTC for P2P data channels
-    implementation("io.getstream:stream-webrtc-android:1.3.10")
+
 
 
 

@@ -70,6 +70,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var nostrSignaler: NostrSignaler? = null
     private var webrtcTransport: WebRtcTransport? = null
     private var bridgePairing: BridgePairing? = null
+    private var pairingInitiated = false
 
     init {
         // Load saved threads from disk
@@ -122,6 +123,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun initNostrPairing(json: String) {
+        if (pairingInitiated) {
+            println("[pairing] Already paired, skipping")
+            return
+        }
+        pairingInitiated = true
         try {
             val pairing = gson.fromJson(json, BridgePairing::class.java)
             if (pairing.pubkey.isBlank() || pairing.relays.isEmpty()) {

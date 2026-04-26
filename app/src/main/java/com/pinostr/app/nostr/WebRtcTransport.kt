@@ -33,15 +33,24 @@ class WebRtcTransport(
     fun initialize(context: Context) {
         if (initialized) return
         initialized = true
+        println("[webrtc] Initializing WebRTC...")
         executor.execute {
-            PeerConnectionFactory.InitializationOptions
-                .builder(context)
-                .setFieldTrials("")
-                .createInitializationOptions()
-                .also { PeerConnectionFactory.initialize(it) }
-            factory = PeerConnectionFactory.builder()
-                .setOptions(PeerConnectionFactory.Options())
-                .createPeerConnectionFactory()
+            try {
+                println("[webrtc] Creating PeerConnectionFactory...")
+                PeerConnectionFactory.InitializationOptions
+                    .builder(context)
+                    .setFieldTrials("")
+                    .createInitializationOptions()
+                    .also { PeerConnectionFactory.initialize(it) }
+                factory = PeerConnectionFactory.builder()
+                    .setOptions(PeerConnectionFactory.Options())
+                    .createPeerConnectionFactory()
+                println("[webrtc] PeerConnectionFactory ready")
+            } catch (e: Exception) {
+                println("[webrtc] Init failed: ${e.message}")
+                initialized = false
+                onError?.invoke(e)
+            }
         }
     }
 
@@ -49,13 +58,21 @@ class WebRtcTransport(
 
     fun createOffer(peerId: String, label: String = "pi-bridge") {
         executor.execute {
-            val pc = initPc(peerId)
-            val dcInit = DataChannel.Init().apply { ordered = true; negotiated = false }
-            val dc = pc.createDataChannel(label, dcInit)
-            setupDataChannel(dc)
-            this.dataChannel = dc
-            this.peerConnection = pc
-            pc.createOffer(offerObserver(pc), MediaConstraints())
+            try {
+                println("[webrtc] Creating offer for $peerId...")
+                val pc = initPc(peerId)
+                println("[webrtc] PC created, creating DataChannel...")
+                val dcInit = DataChannel.Init().apply { ordered = true; negotiated = false }
+                val dc = pc.createDataChannel(label, dcInit)
+                setupDataChannel(dc)
+                this.dataChannel = dc
+                this.peerConnection = pc
+                println("[webrtc] Calling createOffer...")
+                pc.createOffer(offerObserver(pc), MediaConstraints())
+            } catch (e: Exception) {
+                println("[webrtc] Offer creation failed: ${e.message}")
+                onError?.invoke(e)
+            }
         }
     }
 

@@ -5,6 +5,7 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import okhttp3.*
 
 /**
@@ -25,6 +26,9 @@ class NostrClient {
     private var ws: WebSocket? = null
     private var scope: CoroutineScope? = null
     private var subId: String? = null
+    private var relayUrl: String? = null
+    private var currentFilters: Map<String, Any?>? = null
+    private var reconnectJob: Job? = null
 
     private val _events = Channel<NostrEvent>(Channel.UNLIMITED)
     val events: kotlinx.coroutines.channels.ReceiveChannel<NostrEvent> = _events
@@ -42,11 +46,14 @@ class NostrClient {
     /** Connect to a relay URL (wss://...). */
     fun connect(url: String, scope: CoroutineScope) {
         this.scope = scope
+        this.relayUrl = url
         println("[nostr] Connecting to $url...")
         val request = Request.Builder().url(url).build()
         ws = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 println("[nostr] ✅ Connected to $url")
+                // Re-subscribe if we reconnected
+                currentFilters?.let { subscribe(it) }
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -56,16 +63,29 @@ class NostrClient {
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 println("[nostr] ❌ Closed: $reason (code $code)")
+                scheduleReconnect()
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 println("[nostr] 💥 Error: ${t.message}")
+                scheduleReconnect()
             }
         })
     }
 
+    private fun scheduleReconnect() {
+        reconnectJob?.cancel()
+        reconnectJob = scope?.launch {
+            delay(5000)
+            val url = relayUrl ?: return@launch
+            println("[nostr] Reconnecting to $url...")
+            connect(url, scope!!)
+        }
+    }
+
     /** Subscribe to events. Nostr format: ["REQ", subId, {filter1}, {filter2}, ...] */
     fun subscribe(filters: Map<String, Any?>) {
+        currentFilters = filters
         val id = "sub_${System.currentTimeMillis()}"
         subId = id
         val req = JsonArray().apply {
